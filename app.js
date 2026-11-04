@@ -44,8 +44,88 @@
   function renderCalendar() { const date = state.calendarDate; const year=date.getFullYear(),month=date.getMonth(); $('calendarMonth').textContent=date.toLocaleDateString(undefined,{month:'long',year:'numeric'}); const first=new Date(year,month,1); const start=new Date(year,month,1-first.getDay()); const weekdays=['Sun','Mon','Tue','Wed','Thu','Fri','Sat']; let html=weekdays.map(d=>`<div class="calendar-weekday">${d}</div>`).join(''); const today=dateOnly(new Date()); for(let i=0;i<42;i++){const day=new Date(start);day.setDate(start.getDate()+i);const key=dateOnly(day);const events=state.domains.filter(d=>d.expiration_date===key);html+=`<div class="calendar-day ${day.getMonth()!==month?'outside':''} ${key===today?'today':''}"><div class="calendar-day-number">${day.getDate()}</div>${events.slice(0,3).map(d=>`<button class="calendar-domain ${statusFor(d)}" title="${esc(d.domain_name)}" data-calendar-domain="${esc(d.domain_name)}">${esc(d.domain_name)}</button>`).join('')}${events.length>3?`<div class="muted">+${events.length-3} more</div>`:''}</div>`;} $('calendarGrid').innerHTML=html; }
   function parseRdap(data, domain) { const events = data.events || []; const findDate = action => dateOnly(events.find(e=>e.eventAction===action)?.eventDate); const registrarEntity = (data.entities||[]).find(e=>(e.roles||[]).includes('registrar')); let registrar = ''; if(registrarEntity?.vcardArray?.[1]) { const v=registrarEntity.vcardArray[1]; registrar = v.find(row=>row[0]==='fn')?.[3] || v.find(row=>row[0]==='org')?.[3] || ''; } return { domain, registration_date:findDate('registration'), expiration_date:findDate('expiration'), registrar_name:registrar || null, nameservers:(data.nameservers||[]).map(ns=>ns.ldhName).filter(Boolean), status_codes:data.status||[], data_source:data.port43 || data.rdapConformance?.join(', ') || 'RDAP', raw:data } }
   async function rdapLookup(raw) { const domain=validDomain(raw); if(!domain) throw new Error('Enter a valid domain name such as example.com.'); const response=await fetch(`https://rdap.org/domain/${encodeURIComponent(domain)}`,{headers:{Accept:'application/rdap+json, application/json'},cache:'no-store'}); if(response.status===404) throw new Error('No registration record was found. This does not prove the domain is available.'); if(!response.ok) throw new Error(`RDAP lookup failed (${response.status}). Try again later or check whether this TLD supports RDAP.`); const data=await response.json(); return parseRdap(data,domain); }
-  function renderFinderResult(result, target) { const days=daysRemaining(result.expiration_date); const status = result.expiration_date ? (days<0?'Expired':days<=7?'Critical':days<=30?'Expiring soon':'Active') : 'Expiry not published'; $('finderResult').classList.remove('hidden'); $('finderResult').innerHTML=`<div class="result-banner"><div><h2>${esc(result.domain)}</h2><p>Lookup completed · ${esc(result.data_source || 'RDAP')} · ${new Date().toLocaleString()}</p></div>${badge(result.expiration_date ? (days<0?'expired':days<=7?'critical':days<=30?'warning':'healthy'):'unknown')}</div><div class="result-grid"><div class="result-field"><span>Registration date</span><strong>${prettyDate(result.registration_date)}</strong></div><div class="result-field"><span>Expiration date</span><strong>${prettyDate(result.expiration_date)}</strong></div><div class="result-field"><span>Time remaining</span><strong>${result.expiration_date ? esc(days<0?`${Math.abs(days)} days past expiry`:days===0?'Expires today':`${days} days`) : 'Unknown'}</strong></div><div class="result-field"><span>Registrar</span><strong>${esc(result.registrar_name || 'Not disclosed')}</strong></div><div class="result-field"><span>Domain status</span><strong>${esc((result.status_codes||[]).join(', ') || 'Not disclosed')}</strong></div><div class="result-field"><span>Nameservers</span><strong>${esc((result.nameservers||[]).join(', ') || 'Not disclosed')}</strong></div></div><div class="result-detail"><h3>Registration record</h3><code>${esc(JSON.stringify({domain:result.domain, registrationDate:result.registration_date, expirationDate:result.expiration_date, registrar:result.registrar_name, status:result.status_codes, nameservers:result.nameservers},null,2))}</code><div style="margin-top:14px"><button id="saveLookupDomain" class="btn primary" type="button">＋ Add to my domains</button></div></div>`; $('saveLookupDomain').addEventListener('click',()=>openAddWithLookup(result)); }
-  async function handleFinder(e) { e.preventDefault(); const btn=$('finderSubmit'); btn.disabled=true;btn.textContent='Looking up…';$('finderResult').classList.add('hidden');try{const result=await rdapLookup($('finderInput').value);state.lookup=result;renderFinderResult(result);}catch(err){$('finderResult').classList.remove('hidden');$('finderResult').innerHTML=`<div class="result-banner"><div><h2>Lookup unavailable</h2><p>${esc(err.message)}</p></div><span class="badge neutral">No verified result</span></div><div class="result-detail"><p class="field-help">Domain availability, registrar data and expiration dates are not inferred when a provider fails.</p></div>`;}finally{btn.disabled=false;btn.textContent='Look up domain →';} }
+function renderFinderResult(result, target = 'finderResult') {
+  const days = daysRemaining(result.expiration_date);
+
+  const status = result.expiration_date
+    ? (days < 0 ? 'Expired' : days <= 7 ? 'Critical' : days <= 30 ? 'Expiring soon' : 'Active')
+    : 'Expiry not published';
+
+  const box = $(target);
+  const saveButtonId = target === 'overviewScanResult'
+    ? 'saveOverviewScanDomain'
+    : 'saveLookupDomain';
+
+  box.classList.remove('hidden');
+
+  box.innerHTML = `
+    <div class="result-banner">
+      <div>
+        <h2>${esc(result.domain)}</h2>
+        <p>Lookup completed · ${esc(result.data_source || 'RDAP')} · ${new Date().toLocaleString()}</p>
+      </div>
+      ${badge(result.expiration_date ? (days < 0 ? 'expired' : days <= 7 ? 'critical' : days <= 30 ? 'warning' : 'healthy') : 'unknown')}
+    </div>
+
+    <div class="result-grid">
+      <div class="result-field"><span>Registration date</span><strong>${prettyDate(result.registration_date)}</strong></div>
+      <div class="result-field"><span>Expiration date</span><strong>${prettyDate(result.expiration_date)}</strong></div>
+      <div class="result-field"><span>Time remaining</span><strong>${result.expiration_date ? esc(days < 0 ? `${Math.abs(days)} days past expiry` : days === 0 ? 'Expires today' : `${days} days`) : 'Unknown'}</strong></div>
+      <div class="result-field"><span>Registrar</span><strong>${esc(result.registrar_name || 'Not disclosed')}</strong></div>
+      <div class="result-field"><span>Domain status</span><strong>${esc((result.status_codes || []).join(', ') || 'Not disclosed')}</strong></div>
+      <div class="result-field"><span>Nameservers</span><strong>${esc((result.nameservers || []).join(', ') || 'Not disclosed')}</strong></div>
+    </div>
+
+    <div class="result-detail">
+      <h3>Registration record</h3>
+      <code>${esc(JSON.stringify({
+        domain: result.domain,
+        registrationDate: result.registration_date,
+        expirationDate: result.expiration_date,
+        registrar: result.registrar_name,
+        status: result.status_codes,
+        nameservers: result.nameservers
+      }, null, 2))}</code>
+
+      <div style="margin-top:14px">
+        <button id="${saveButtonId}" class="btn primary" type="button">
+          ＋ Add to my domains
+        </button>
+      </div>
+    </div>
+  `;
+
+  $(saveButtonId).addEventListener('click', () => openAddWithLookup(result));
+}
+  async function handleOverviewScan(e) {
+  e.preventDefault();
+
+  const btn = $('overviewScanBtn');
+  const resultBox = $('overviewScanResult');
+
+  btn.disabled = true;
+  btn.textContent = 'Scanning…';
+  resultBox.classList.add('hidden');
+
+  try {
+    const result = await rdapLookup($('overviewScanInput').value);
+    state.lookup = result;
+    renderFinderResult(result, 'overviewScanResult');
+  } catch (err) {
+    resultBox.classList.remove('hidden');
+    resultBox.innerHTML = `
+      <div class="result-banner">
+        <div>
+          <h2>Scan unavailable</h2>
+          <p>${esc(err.message)}</p>
+        </div>
+        <span class="badge neutral">No verified result</span>
+      </div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Scan Domain';
+  }
+}
   function openAddWithLookup(result=null) { if(!client || !state.user) return toast('Connect Supabase and sign in to save domains.', 'error'); state.addLookup=result; $('newDomainName').value=result?.domain||$('finderInput').value||''; $('newDomainPortfolio').value='Unassigned'; $('newDomainNotes').value=''; $('precheckSummary').classList.toggle('hidden',!result); $('precheckStatus').textContent=result?'Registration data loaded':'Optional, recommended'; if(result) $('precheckSummary').innerHTML=`<b>${esc(result.domain)}</b><br>Expiration: ${prettyDate(result.expiration_date)}<br>Registrar: ${esc(result.registrar_name||'Not disclosed')}<br><span>Only provider-returned data will be saved.</span>`; $('domainDialog').showModal(); }
   async function precheckDomain() { try { $('precheckBtn').disabled=true;$('precheckStatus').textContent='Checking RDAP…'; const result=await rdapLookup($('newDomainName').value);state.addLookup=result;$('precheckSummary').classList.remove('hidden');$('precheckSummary').innerHTML=`<b>${esc(result.domain)}</b><br>Registration: ${prettyDate(result.registration_date)}<br>Expiration: ${prettyDate(result.expiration_date)}<br>Registrar: ${esc(result.registrar_name||'Not disclosed')}<br>Nameservers: ${esc(result.nameservers.join(', ')||'Not disclosed')}`;$('precheckStatus').textContent='Registration data retrieved';toast('RDAP lookup completed. Review the result before saving.','success'); } catch(err) { state.addLookup=null;$('precheckStatus').textContent='Lookup unavailable';toast(err.message,'error'); } finally {$('precheckBtn').disabled=false;} }
   async function saveDomain(e) { e.preventDefault(); const name=validDomain($('newDomainName').value);if(!name)return toast('Enter a valid domain name.','error');if(state.domains.some(d=>d.domain_name.toLowerCase()===name))return toast('This domain is already in your portfolio.','error');const b=$('saveDomainBtn');b.disabled=true;try{let lookup=state.addLookup;if(!lookup || lookup.domain!==name){try{lookup=await rdapLookup(name);}catch{lookup=null;}}const row={owner_id:state.user.id,domain_name:name,tld:name.split('.').pop(),registrar_name:lookup?.registrar_name||null,registration_date:lookup?.registration_date||null,expiration_date:lookup?.expiration_date||null,nameservers:lookup?.nameservers||[],domain_status:(lookup?.status_codes||[]).join(', ')||'unknown',portfolio:$('newDomainPortfolio').value.trim()||'Unassigned',notes:$('newDomainNotes').value.trim()||null,data_source:lookup?.data_source||null,last_checked_at:lookup?new Date().toISOString():null,next_check_at:new Date().toISOString()};const {data,error}=await client.from('domains').insert(row).select().single();if(error)throw error;state.domains.push(data);if(row.portfolio!=='Unassigned'&&!state.portfolios.some(p=>p.name===row.portfolio)){const {data:pdata}=await client.from('portfolios').insert({owner_id:state.user.id,name:row.portfolio}).select().maybeSingle();if(pdata)state.portfolios.push(pdata);} $('domainDialog').close();state.addLookup=null;renderAll();toast(lookup?'Domain saved with available RDAP data.':'Domain saved; registration data is unknown until a successful check.','success');}catch(err){toast(err.message||'Could not save domain.','error');}finally{b.disabled=false;} }
@@ -59,7 +139,7 @@
   async function saveEmail(e) { e.preventDefault();const email=$('notifyEmail').value.trim();if($('emailEnabled').checked&&!email)return toast('Enter a notification email address.','error');const ok=await savePrefs({email_recipient:email||null,email_enabled:$('emailEnabled').checked});if(ok)fillPrefs(); }
   async function saveThresholds() { const days=[...document.querySelectorAll('.threshold-check:checked')].map(el=>Number(el.value)).sort((a,b)=>b-a);if(!days.length)return toast('Select at least one reminder threshold.','error');const ok=await savePrefs({notify_days_before:days});if(ok)toast('Reminder schedule saved.','success'); }
   async function testNotification(channel) { if(!client || !state.user)return toast('Sign in and connect Supabase first.','error');const prefs=state.prefs||{};if(channel==='email'&&(!prefs.email_recipient||!prefs.email_enabled))return toast('Enable email alerts and save a recipient first.','error');if(channel==='telegram'&&(!prefs.telegram_chat_id||!prefs.telegram_enabled))return toast('Enable Telegram alerts and save a chat ID first.','error');const btn=$(channel==='email'?'emailTestBtn':'telegramTestBtn');btn.disabled=true;const old=btn.textContent;btn.textContent='Sending…';try{const {data,error}=await client.functions.invoke('test-notifications',{body:{channel}});if(error)throw error;if(data?.error)throw new Error(data.error);toast(data?.message||'Test notification accepted by provider.','success');}catch(err){toast(`Test failed: ${err.message}. Check Edge Function deployment and server secrets.`, 'error');}finally{btn.disabled=false;btn.textContent=old;} }
-  function bindEvents() { $('authForm').addEventListener('submit',handleAuthSubmit);$('authModeToggle').addEventListener('click',()=>setAuthMode(state.authMode==='login'?'signup':'login'));$('forgotBtn').addEventListener('click',()=>setAuthMode('forgot'));$('signOutBtn').addEventListener('click',signOut);$('settingsSignOut').addEventListener('click',signOut);$('themeToggle').addEventListener('click',()=>{state.dark=!state.dark;showTheme();});$('settingsThemeToggle').addEventListener('change',e=>{state.dark=e.target.checked;showTheme();});document.querySelectorAll('.nav-item[data-page]').forEach(el=>el.addEventListener('click',()=>goPage(el.dataset.page)));document.querySelectorAll('[data-goto]').forEach(el=>el.addEventListener('click',()=>goPage(el.dataset.goto)));$('topAddBtn').addEventListener('click',()=>openAddWithLookup());$('addDomainBtn').addEventListener('click',()=>openAddWithLookup());$('domainForm').addEventListener('submit',saveDomain);$('precheckBtn').addEventListener('click',precheckDomain);$('importBtn').addEventListener('click',()=>$('importDialog').showModal());$('importForm').addEventListener('submit',importDomains);$('exportBtn').addEventListener('click',exportCsv);$('finderForm').addEventListener('submit',handleFinder);$('overviewScanForm').addEventListener('submit',handleOverviewScan);$('telegramForm').addEventListener('submit',saveTelegram);$('emailForm').addEventListener('submit',saveEmail);$('telegramTestBtn').addEventListener('click',()=>testNotification('telegram'));$('emailTestBtn').addEventListener('click',()=>testNotification('email'));$('saveThresholdsBtn').addEventListener('click',saveThresholds);$('newPortfolioBtn').addEventListener('click',()=>$('portfolioDialog').showModal());$('portfolioForm').addEventListener('submit',savePortfolio);$('refreshBtn').addEventListener('click',async()=>{if(!client)return toast('Configure Supabase first.','error');await loadWorkspace();toast('Workspace refreshed.','success');});$('markReadBtn').addEventListener('click',markAlertsRead);$('domainSearch').addEventListener('input',renderDomains);$('statusFilter').addEventListener('change',renderDomains);$('portfolioFilter').addEventListener('change',renderDomains);$('alertFilter').addEventListener('change',renderAlerts);$('globalSearch').addEventListener('input',e=>{if(e.target.value){$('domainSearch').value=e.target.value;goPage('domains');renderDomains();}});$('calendarPrev').addEventListener('click',()=>{state.calendarDate.setMonth(state.calendarDate.getMonth()-1);renderCalendar();});$('calendarNext').addEventListener('click',()=>{state.calendarDate.setMonth(state.calendarDate.getMonth()+1);renderCalendar();});$('calendarToday').addEventListener('click',()=>{state.calendarDate=new Date();renderCalendar();});$('mobileMenu').addEventListener('click',()=>{$('sidebar').classList.add('open');$('mobileScrim').classList.add('show');});$('mobileClose').addEventListener('click',()=>{$('sidebar').classList.remove('open');$('mobileScrim').classList.remove('show');});$('mobileScrim').addEventListener('click',()=>{$('sidebar').classList.remove('open');$('mobileScrim').classList.remove('show');});document.querySelectorAll('[data-close-dialog]').forEach(el=>el.addEventListener('click',()=>el.closest('dialog').close()));document.body.addEventListener('click',e=>{const del=e.target.closest('[data-delete-domain]');if(del)deleteDomain(del.dataset.deleteDomain,del.dataset.domainName);const pd=e.target.closest('[data-delete-portfolio]');if(pd)deletePortfolio(pd.dataset.deletePortfolio,pd.dataset.portfolioName);const cd=e.target.closest('[data-calendar-domain]');if(cd){goPage('domains');$('domainSearch').value=cd.dataset.calendarDomain;renderDomains();}});document.addEventListener('keydown',e=>{if(e.key==='/'&&!['INPUT','TEXTAREA'].includes(document.activeElement.tagName)){e.preventDefault();$('globalSearch').focus();}if(e.key==='Escape'){$('sidebar').classList.remove('open');$('mobileScrim').classList.remove('show');}}); }
+  function bindEvents() { $('authForm').addEventListener('submit',handleAuthSubmit);$('authModeToggle').addEventListener('click',()=>setAuthMode(state.authMode==='login'?'signup':'login'));$('forgotBtn').addEventListener('click',()=>setAuthMode('forgot'));$('signOutBtn').addEventListener('click',signOut);$('settingsSignOut').addEventListener('click',signOut);$('themeToggle').addEventListener('click',()=>{state.dark=!state.dark;showTheme();});$('settingsThemeToggle').addEventListener('change',e=>{state.dark=e.target.checked;showTheme();});document.querySelectorAll('.nav-item[data-page]').forEach(el=>el.addEventListener('click',()=>goPage(el.dataset.page)));document.querySelectorAll('[data-goto]').forEach(el=>el.addEventListener('click',()=>goPage(el.dataset.goto)));$('topAddBtn').addEventListener('click',()=>openAddWithLookup());$('addDomainBtn').addEventListener('click',()=>openAddWithLookup());$('domainForm').addEventListener('submit',saveDomain);$('precheckBtn').addEventListener('click',precheckDomain);$('importBtn').addEventListener('click',()=>$('importDialog').showModal());$('importForm').addEventListener('submit',importDomains);$('exportBtn').addEventListener('click',exportCsv);$('finderForm').addEventListener('submit',handleFinder);$('telegramForm').addEventListener('submit',saveTelegram);
   async function init() { showTheme();bindEvents();setAuthMode('login');if(!configured){appView();$('setupNotice').classList.remove('hidden');$('lastSyncLabel').textContent='Backend not configured';$('updatedLabel').textContent='Setup required';toast('Website loaded. Connect Supabase to enable account and database features.');return;} $('setupNotice').classList.add('hidden');try{const {data,error}=await client.auth.getSession();if(error)throw error;state.session=data.session;state.user=data.session?.user||null;if(state.user)await afterSignIn();else authView();client.auth.onAuthStateChange((_event,session)=>{state.session=session;state.user=session?.user||null;if(state.user){appView();setTimeout(()=>afterSignIn(),0);}else{state.domains=[];state.alerts=[];authView();}});}catch(err){authView();toast(`Could not initialize authentication: ${err.message}`,'error');}}
   init();
 })();
