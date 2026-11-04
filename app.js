@@ -139,7 +139,229 @@ function renderFinderResult(result, target = 'finderResult') {
   async function saveEmail(e) { e.preventDefault();const email=$('notifyEmail').value.trim();if($('emailEnabled').checked&&!email)return toast('Enter a notification email address.','error');const ok=await savePrefs({email_recipient:email||null,email_enabled:$('emailEnabled').checked});if(ok)fillPrefs(); }
   async function saveThresholds() { const days=[...document.querySelectorAll('.threshold-check:checked')].map(el=>Number(el.value)).sort((a,b)=>b-a);if(!days.length)return toast('Select at least one reminder threshold.','error');const ok=await savePrefs({notify_days_before:days});if(ok)toast('Reminder schedule saved.','success'); }
   async function testNotification(channel) { if(!client || !state.user)return toast('Sign in and connect Supabase first.','error');const prefs=state.prefs||{};if(channel==='email'&&(!prefs.email_recipient||!prefs.email_enabled))return toast('Enable email alerts and save a recipient first.','error');if(channel==='telegram'&&(!prefs.telegram_chat_id||!prefs.telegram_enabled))return toast('Enable Telegram alerts and save a chat ID first.','error');const btn=$(channel==='email'?'emailTestBtn':'telegramTestBtn');btn.disabled=true;const old=btn.textContent;btn.textContent='Sending…';try{const {data,error}=await client.functions.invoke('test-notifications',{body:{channel}});if(error)throw error;if(data?.error)throw new Error(data.error);toast(data?.message||'Test notification accepted by provider.','success');}catch(err){toast(`Test failed: ${err.message}. Check Edge Function deployment and server secrets.`, 'error');}finally{btn.disabled=false;btn.textContent=old;} }
-  function bindEvents() { $('authForm').addEventListener('submit',handleAuthSubmit);$('authModeToggle').addEventListener('click',()=>setAuthMode(state.authMode==='login'?'signup':'login'));$('forgotBtn').addEventListener('click',()=>setAuthMode('forgot'));$('signOutBtn').addEventListener('click',signOut);$('settingsSignOut').addEventListener('click',signOut);$('themeToggle').addEventListener('click',()=>{state.dark=!state.dark;showTheme();});$('settingsThemeToggle').addEventListener('change',e=>{state.dark=e.target.checked;showTheme();});document.querySelectorAll('.nav-item[data-page]').forEach(el=>el.addEventListener('click',()=>goPage(el.dataset.page)));document.querySelectorAll('[data-goto]').forEach(el=>el.addEventListener('click',()=>goPage(el.dataset.goto)));$('topAddBtn').addEventListener('click',()=>openAddWithLookup());$('addDomainBtn').addEventListener('click',()=>openAddWithLookup());$('domainForm').addEventListener('submit',saveDomain);$('precheckBtn').addEventListener('click',precheckDomain);$('importBtn').addEventListener('click',()=>$('importDialog').showModal());$('importForm').addEventListener('submit',importDomains);$('exportBtn').addEventListener('click',exportCsv);$('finderForm').addEventListener('submit',handleFinder);$('telegramForm').addEventListener('submit',saveTelegram);
-  async function init() { showTheme();bindEvents();setAuthMode('login');if(!configured){appView();$('setupNotice').classList.remove('hidden');$('lastSyncLabel').textContent='Backend not configured';$('updatedLabel').textContent='Setup required';toast('Website loaded. Connect Supabase to enable account and database features.');return;} $('setupNotice').classList.add('hidden');try{const {data,error}=await client.auth.getSession();if(error)throw error;state.session=data.session;state.user=data.session?.user||null;if(state.user)await afterSignIn();else authView();client.auth.onAuthStateChange((_event,session)=>{state.session=session;state.user=session?.user||null;if(state.user){appView();setTimeout(()=>afterSignIn(),0);}else{state.domains=[];state.alerts=[];authView();}});}catch(err){authView();toast(`Could not initialize authentication: ${err.message}`,'error');}}
+async function handleFinder(e) {
+  e.preventDefault();
+
+  const btn = $('finderSubmit');
+  const resultBox = $('finderResult');
+
+  btn.disabled = true;
+  btn.textContent = 'Looking up...';
+  resultBox.classList.add('hidden');
+
+  try {
+    const result = await rdapLookup($('finderInput').value);
+
+    state.lookup = result;
+    renderFinderResult(result, 'finderResult');
+
+  } catch (err) {
+    resultBox.classList.remove('hidden');
+    resultBox.innerHTML = `
+      <div class="result-banner">
+        <div>
+          <h2>Lookup unavailable</h2>
+          <p>${esc(err.message)}</p>
+        </div>
+        <span class="badge neutral">No verified result</span>
+      </div>
+    `;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Look up domain →';
+  }
+}
+
+function bindEvents() {
+  $('authForm').addEventListener('submit', handleAuthSubmit);
+  $('authModeToggle').addEventListener('click', () =>
+    setAuthMode(state.authMode === 'login' ? 'signup' : 'login')
+  );
+  $('forgotBtn').addEventListener('click', () => setAuthMode('forgot'));
+
+  $('signOutBtn').addEventListener('click', signOut);
+  $('settingsSignOut').addEventListener('click', signOut);
+
+  $('themeToggle').addEventListener('click', () => {
+    state.dark = !state.dark;
+    showTheme();
+  });
+
+  $('settingsThemeToggle').addEventListener('change', e => {
+    state.dark = e.target.checked;
+    showTheme();
+  });
+
+  document.querySelectorAll('.nav-item[data-page]').forEach(el =>
+    el.addEventListener('click', () => goPage(el.dataset.page))
+  );
+
+  document.querySelectorAll('[data-goto]').forEach(el =>
+    el.addEventListener('click', () => goPage(el.dataset.goto))
+  );
+
+  $('topAddBtn').addEventListener('click', () => openAddWithLookup());
+  $('addDomainBtn').addEventListener('click', () => openAddWithLookup());
+
+  $('domainForm').addEventListener('submit', saveDomain);
+  $('precheckBtn').addEventListener('click', precheckDomain);
+
+  $('importBtn').addEventListener('click', () => $('importDialog').showModal());
+  $('importForm').addEventListener('submit', importDomains);
+  $('exportBtn').addEventListener('click', exportCsv);
+
+  $('finderForm').addEventListener('submit', handleFinder);
+
+  $('telegramForm').addEventListener('submit', saveTelegram);
+  $('emailForm').addEventListener('submit', saveEmail);
+
+  $('telegramTestBtn').addEventListener('click', () => testNotification('telegram'));
+  $('emailTestBtn').addEventListener('click', () => testNotification('email'));
+
+  $('saveThresholdsBtn').addEventListener('click', saveThresholds);
+  $('newPortfolioBtn').addEventListener('click', () => $('portfolioDialog').showModal());
+  $('portfolioForm').addEventListener('submit', savePortfolio);
+
+  $('refreshBtn').addEventListener('click', async () => {
+    if (!client) return toast('Configure Supabase first.', 'error');
+    await loadWorkspace();
+    toast('Workspace refreshed.', 'success');
+  });
+
+  $('markReadBtn').addEventListener('click', markAlertsRead);
+
+  $('domainSearch').addEventListener('input', renderDomains);
+  $('statusFilter').addEventListener('change', renderDomains);
+  $('portfolioFilter').addEventListener('change', renderDomains);
+  $('alertFilter').addEventListener('change', renderAlerts);
+
+  $('globalSearch').addEventListener('input', e => {
+    if (e.target.value) {
+      $('domainSearch').value = e.target.value;
+      goPage('domains');
+      renderDomains();
+    }
+  });
+
+  $('calendarPrev').addEventListener('click', () => {
+    state.calendarDate.setMonth(state.calendarDate.getMonth() - 1);
+    renderCalendar();
+  });
+
+  $('calendarNext').addEventListener('click', () => {
+    state.calendarDate.setMonth(state.calendarDate.getMonth() + 1);
+    renderCalendar();
+  });
+
+  $('calendarToday').addEventListener('click', () => {
+    state.calendarDate = new Date();
+    renderCalendar();
+  });
+
+  $('mobileMenu').addEventListener('click', () => {
+    $('sidebar').classList.add('open');
+    $('mobileScrim').classList.add('show');
+  });
+
+  $('mobileClose').addEventListener('click', () => {
+    $('sidebar').classList.remove('open');
+    $('mobileScrim').classList.remove('show');
+  });
+
+  $('mobileScrim').addEventListener('click', () => {
+    $('sidebar').classList.remove('open');
+    $('mobileScrim').classList.remove('show');
+  });
+
+  document.querySelectorAll('[data-close-dialog]').forEach(el =>
+    el.addEventListener('click', () => el.closest('dialog').close())
+  );
+
+  document.body.addEventListener('click', e => {
+    const del = e.target.closest('[data-delete-domain]');
+    if (del) deleteDomain(del.dataset.deleteDomain, del.dataset.domainName);
+
+    const pd = e.target.closest('[data-delete-portfolio]');
+    if (pd) deletePortfolio(pd.dataset.deletePortfolio, pd.dataset.portfolioName);
+
+    const cd = e.target.closest('[data-calendar-domain]');
+    if (cd) {
+      goPage('domains');
+      $('domainSearch').value = cd.dataset.calendarDomain;
+      renderDomains();
+    }
+  });
+
+  document.addEventListener('keydown', e => {
+    if (
+      e.key === '/' &&
+      !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)
+    ) {
+      e.preventDefault();
+      $('globalSearch').focus();
+    }
+
+    if (e.key === 'Escape') {
+      $('sidebar').classList.remove('open');
+      $('mobileScrim').classList.remove('show');
+    }
+  });
+}
+
+async function init() {
+  showTheme();
+  bindEvents();
+  setAuthMode('login');
+
+  if (!configured) {
+    appView();
+    $('setupNotice').classList.remove('hidden');
+    $('lastSyncLabel').textContent = 'Backend not configured';
+    $('updatedLabel').textContent = 'Setup required';
+    toast('Website loaded. Connect Supabase to enable account and database features.');
+    return;
+  }
+
+  $('setupNotice').classList.add('hidden');
+
+  try {
+    const { data, error } = await client.auth.getSession();
+
+    if (error) throw error;
+
+    state.session = data.session;
+    state.user = data.session?.user || null;
+
+    if (state.user) {
+      await afterSignIn();
+    } else {
+      authView();
+    }
+
+    client.auth.onAuthStateChange((_event, session) => {
+      state.session = session;
+      state.user = session?.user || null;
+
+      if (state.user) {
+        appView();
+        setTimeout(() => afterSignIn(), 0);
+      } else {
+        state.domains = [];
+        state.alerts = [];
+        authView();
+      }
+    });
+
+  } catch (err) {
+    authView();
+    toast(`Could not initialize authentication: ${err.message}`, 'error');
+  }
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
   init();
+}
+
 })();
