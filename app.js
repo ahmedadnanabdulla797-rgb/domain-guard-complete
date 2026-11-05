@@ -306,6 +306,21 @@ function bindEvents() {
       $('mobileScrim').classList.remove('show');
     }
   });
+  // Show / Hide Password
+  $('togglePassword').addEventListener('click', () => {
+    const password = $('authPassword');
+    const button = $('togglePassword');
+
+    const isHidden = password.type === 'password';
+
+    password.type = isHidden ? 'text' : 'password';
+    button.textContent = isHidden ? '🙈' : '👁';
+
+    button.setAttribute(
+      'aria-label',
+      isHidden ? 'Hide password' : 'Show password'
+    );
+  });
 }
 
 async function init() {
