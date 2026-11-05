@@ -2,3 +2,35 @@
 @media(max-width:1180px){.page-wrap{padding:27px 24px}.topbar{padding:0 24px}.sidebar{width:225px}.main-area{margin-left:225px}.content-grid{grid-template-columns:minmax(0,1.4fr) minmax(250px,1fr)}.search-box{width:180px}.metric-grid{gap:10px}.metric-card{padding:15px}.metric-value{font-size:26px}}
 @media(max-width:900px){.sidebar{transform:translateX(-100%);transition:transform .2s}.sidebar.open{transform:translateX(0)}.main-area{margin-left:0}.mobile-only{display:inline-grid}.mobile-scrim.show{display:block;position:fixed;inset:0;background:#0a1221a8;z-index:25}.topbar{gap:10px}.breadcrumbs{margin-right:auto}.content-grid{grid-template-columns:1fr}.health-panel{min-height:0}.integration-grid{grid-template-columns:1fr}.settings-layout{grid-template-columns:1fr}.portfolio-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:620px){.topbar{height:62px;padding:0 14px}.page-wrap{padding:22px 13px}.top-actions{gap:7px}.top-actions .search-box{display:none}.top-actions .btn{font-size:10px;padding:8px}.user-chip{display:none}.page-heading{align-items:flex-start;flex-direction:column;margin-bottom:19px}.page-heading h1{font-size:26px}.heading-actions{width:100%;flex-wrap:wrap}.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.metric-card{padding:13px}.metric-value{font-size:25px}.metric-top{font-size:10px}.metric-foot{font-size:9px}.panel-head{padding:16px}.table-toolbar{align-items:stretch}.table-search{width:100%;max-width:none}.select-control{flex:1;max-width:none}.table-foot{flex-direction:column}.finder-panel{padding:17px}.finder-input-row{flex-direction:column}.finder-input-row .btn{width:100%}.result-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.result-field{padding:12px}.calendar-title{align-items:flex-start;flex-direction:column;padding:16px}.calendar-grid{padding:0 9px 12px;gap:3px}.calendar-day{min-height:72px;padding:4px}.calendar-weekday{font-size:7px;padding:5px 1px}.calendar-domain{font-size:7px;padding:3px}.calendar-day-number{font-size:9px}.portfolio-grid{grid-template-columns:1fr;padding:4px 13px 14px}.integration-card,.settings-section{padding:15px}.threshold-panel{padding:15px}.threshold-options{gap:11px}.app-footer{flex-direction:column;line-height:1.5}.activity-meta{display:none}.auth-card{padding:22px}.updated-label{margin:0}.page-heading .heading-actions .btn{flex:1}.data-table th,.data-table td{padding-left:12px;padding-right:12px}}
+/* Password Show/Hide Button */
+
+.password-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.password-wrapper input {
+  width: 100%;
+  padding-right: 45px !important;
+}
+
+.password-toggle {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 18px;
+  padding: 5px;
+  z-index: 10;
+  display: block;
+}
+
+.password-toggle:hover {
+  color: var(--accent);
+}
