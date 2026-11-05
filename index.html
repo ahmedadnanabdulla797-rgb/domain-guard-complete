@@ -18,7 +18,27 @@
       <div class="eyebrow">SECURE WORKSPACE</div><h1 id="authTitle">Welcome back</h1><p id="authSubtitle">Sign in to manage your domain portfolio.</p>
       <form id="authForm">
         <label>Email address<input id="authEmail" type="email" autocomplete="email" placeholder="you@company.com" required></label>
-        <label id="passwordLabel">Password<input id="authPassword" type="password" autocomplete="current-password" minlength="6" placeholder="At least 6 characters" required></label>
+        <label id="passwordLabel">
+  Password
+
+  <div class="password-wrapper">
+    <input
+      id="authPassword"
+      type="password"
+      autocomplete="current-password"
+      minlength="6"
+      placeholder="At least 6 characters"
+      required
+    >
+
+    <button
+      type="button"
+      id="togglePassword"
+      class="password-toggle"
+      aria-label="Show password"
+    >👁</button>
+  </div>
+</label>
         <button id="authSubmit" class="btn primary full" type="submit">Sign in</button>
       </form>
       <div class="auth-links"><button id="authModeToggle" class="link-btn">Create an account</button><button id="forgotBtn" class="link-btn">Forgot password?</button></div>
