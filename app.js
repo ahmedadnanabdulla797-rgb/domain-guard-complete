@@ -130,7 +130,37 @@ function renderFinderResult(result, target = 'finderResult') {
   async function precheckDomain() { try { $('precheckBtn').disabled=true;$('precheckStatus').textContent='Checking RDAP…'; const result=await rdapLookup($('newDomainName').value);state.addLookup=result;$('precheckSummary').classList.remove('hidden');$('precheckSummary').innerHTML=`<b>${esc(result.domain)}</b><br>Registration: ${prettyDate(result.registration_date)}<br>Expiration: ${prettyDate(result.expiration_date)}<br>Registrar: ${esc(result.registrar_name||'Not disclosed')}<br>Nameservers: ${esc(result.nameservers.join(', ')||'Not disclosed')}`;$('precheckStatus').textContent='Registration data retrieved';toast('RDAP lookup completed. Review the result before saving.','success'); } catch(err) { state.addLookup=null;$('precheckStatus').textContent='Lookup unavailable';toast(err.message,'error'); } finally {$('precheckBtn').disabled=false;} }
   async function saveDomain(e) { e.preventDefault(); const name=validDomain($('newDomainName').value);if(!name)return toast('Enter a valid domain name.','error');if(state.domains.some(d=>d.domain_name.toLowerCase()===name))return toast('This domain is already in your portfolio.','error');const b=$('saveDomainBtn');b.disabled=true;try{let lookup=state.addLookup;if(!lookup || lookup.domain!==name){try{lookup=await rdapLookup(name);}catch{lookup=null;}}const row={owner_id:state.user.id,domain_name:name,tld:name.split('.').pop(),registrar_name:lookup?.registrar_name||null,registration_date:lookup?.registration_date||null,expiration_date:lookup?.expiration_date||null,nameservers:lookup?.nameservers||[],domain_status:(lookup?.status_codes||[]).join(', ')||'unknown',portfolio:$('newDomainPortfolio').value.trim()||'Unassigned',notes:$('newDomainNotes').value.trim()||null,data_source:lookup?.data_source||null,last_checked_at:lookup?new Date().toISOString():null,next_check_at:new Date().toISOString()};const {data,error}=await client.from('domains').insert(row).select().single();if(error)throw error;state.domains.push(data);if(row.portfolio!=='Unassigned'&&!state.portfolios.some(p=>p.name===row.portfolio)){const {data:pdata}=await client.from('portfolios').insert({owner_id:state.user.id,name:row.portfolio}).select().maybeSingle();if(pdata)state.portfolios.push(pdata);} $('domainDialog').close();state.addLookup=null;renderAll();toast(lookup?'Domain saved with available RDAP data.':'Domain saved; registration data is unknown until a successful check.','success');}catch(err){toast(err.message||'Could not save domain.','error');}finally{b.disabled=false;} }
   async function deleteDomain(id,name) { if(!confirm(`Remove ${name} from your monitoring portfolio?`))return;const {error}=await client.from('domains').delete().eq('id',id);if(error)return toast(error.message,'error');state.domains=state.domains.filter(d=>d.id!==id);state.alerts=state.alerts.filter(a=>a.domain_id!==id);renderAll();toast(`${name} removed.`,'success'); }
-  async function importDomains(e) { e.preventDefault();const raw=$('importText').value.trim();if(!raw)return;const lines=raw.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);const rows=[];const seen=new Set(state.domains.map(d=>d.domain_name));for(const line of lines){const parts=line.split(',').map(x=>x.trim());const domain=validDomain(parts[0]);if(!domain||seen.has(domain))continue;seen.add(domain);rows.push({owner_id:state.user.id,domain_name:domain,tld:domain.split('.').pop(),portfolio:parts[1]||'Unassigned',notes:parts.slice(2).join(',')||null,domain_status:'pending',nameservers:[],expiration_date:null,registration_date:null,next_check_at:new Date().toISOString()});}if(!rows.length)return toast('No new valid domains found. Existing and invalid domains were skipped.','error');try{const {data,error}=await client.from('domains').insert(rows).select();if(error)throw error;state.domains.push(...data);$('importDialog').close();$('importText').value='';renderAll();toast(`Imported ${data.length} domain(s). Expiry data will be fetched by scheduled monitoring.`,'success');}catch(err){toast(err.message,'error');} }
+   async function importDomains(e) { e.preventDefault();const raw=$('importText').value.trim();if(!raw)return;const lines=raw.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);const rows=[];const seen=new Set(state.domains.map(d=>d.domain_name));for(const line of lines){const parts=line.split(',').map(x=>x.trim());const domain=validDomain(parts[0]);if(!domain||seen.has(domain))continue;seen.add(domain);rows.push({owner_id:state.user.id,domain_name:domain,tld:domain.split('.').pop(),portfolio:parts[1]||'Unassigned',notes:parts.slice(2).join(',')||null,domain_status:'pending',nameservers:[],expiration_date:null,registration_date:null,next_check_at:new Date().toISOString()});}if(!rows.length)return toast('No new valid domains found. Existing and invalid domains were skipped.','error');try{const {data,error}=await client.from('domains').insert(rows).select();if(error)throw error;state.domains.push(...data);$('importDialog').close();$('importText').value='';renderAll();toast(`Imported ${data.length} domain(s). Expiry data will be fetched by scheduled monitoring.`,'success');}catch(err){toast(err.message,'error');}// =====================================
+// CSV FILE UPLOAD AND DRAG & DROP
+// =====================================
+
+async function loadCsvFile(file) {
+  if (!file) return;
+
+  if (!file.name.toLowerCase().endsWith('.csv')) {
+    toast('Please select a CSV file.', 'error');
+    return;
+  }
+
+  try {
+    const text = await file.text();
+
+    if (!text.trim()) {
+      toast('The selected CSV file is empty.', 'error');
+      return;
+    }
+
+    $('importText').value = text;
+
+    $('csvFileName').textContent = '✓ Selected: ' + file.name;
+    $('csvFileName').classList.remove('hidden');
+
+    toast('CSV file loaded. Review it and click Import domains.', 'success');
+
+  } catch (error) {
+    toast('Could not read the CSV file.', 'error');
+  }
+}
   function exportCsv() { const headers=['domain_name','registrar_name','registration_date','expiration_date','portfolio','domain_status','last_checked_at','notes'];const csv=[headers.join(','),...state.domains.map(d=>headers.map(h=>`"${String(d[h]??'').replace(/"/g,'""')}"`).join(','))].join('\r\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='domainguard-domains.csv';a.click();URL.revokeObjectURL(url);toast('CSV export created.','success'); }
   async function savePortfolio(e) { e.preventDefault();const name=$('portfolioName').value.trim();if(!name)return;if(state.portfolios.some(p=>p.name.toLowerCase()===name.toLowerCase()))return toast('That portfolio already exists.','error');const {data,error}=await client.from('portfolios').insert({owner_id:state.user.id,name}).select().single();if(error)return toast(error.message,'error');state.portfolios.push(data);$('portfolioDialog').close();$('portfolioName').value='';renderAll();toast('Portfolio created. Assign domains to it when adding or editing a domain.','success'); }
   async function deletePortfolio(id,name) { if(!confirm(`Delete portfolio “${name}”? Domains assigned to it will remain in your account.`))return;const {error}=await client.from('portfolios').delete().eq('id',id);if(error)return toast(error.message,'error');state.portfolios=state.portfolios.filter(p=>p.id!==id);renderAll();toast('Portfolio deleted.','success'); }
