@@ -238,6 +238,7 @@ function bindEvents() {
 
   $('importBtn').addEventListener('click', () => $('importDialog').showModal());
   $('importForm').addEventListener('submit', importDomains);
+  bindCsvUpload();
   $('exportBtn').addEventListener('click', exportCsv);
 
   $('finderForm').addEventListener('submit', handleFinder);
