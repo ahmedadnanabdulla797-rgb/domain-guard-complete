@@ -100,7 +100,75 @@
   </div>
 
   <dialog id="domainDialog" class="modal"><form id="domainForm" method="dialog"><div class="modal-head"><div><div class="eyebrow">PORTFOLIO MANAGEMENT</div><h2>Add a domain</h2><p>Look up registration data before saving. Missing expiry data remains unknown.</p></div><button type="button" class="icon-btn" data-close-dialog aria-label="Close">×</button></div><label>Domain name<input id="newDomainName" placeholder="example.com" required autocomplete="off"></label><div class="lookup-inline"><button id="precheckBtn" class="btn secondary" type="button">Check registration data</button><span id="precheckStatus" class="field-help">Optional, recommended</span></div><div id="precheckSummary" class="precheck-summary hidden"></div><label>Portfolio<input id="newDomainPortfolio" list="portfolioOptions" placeholder="Production, Client A…" value="Unassigned"><datalist id="portfolioOptions"></datalist></label><label>Notes <span class="muted">(optional)</span><textarea id="newDomainNotes" rows="2" placeholder="Renewal owner, client, or context"></textarea></label><div class="modal-actions"><button type="button" class="btn secondary" data-close-dialog>Cancel</button><button id="saveDomainBtn" type="submit" class="btn primary">Save domain</button></div></form></dialog>
-  <dialog id="importDialog" class="modal"><form id="importForm" method="dialog"><div class="modal-head"><div><div class="eyebrow">BULK IMPORT</div><h2>Import domains</h2><p>Paste one domain per line, or CSV with columns: domain, portfolio, notes.</p></div><button type="button" class="icon-btn" data-close-dialog>×</button></div><textarea id="importText" rows="8" placeholder="example.com, Production, Main website&#10;example.org, Client A, Renewal contact"></textarea><p class="field-help">Imported names are saved as unverified until the backend retrieves registration data. Dates are never invented.</p><div class="modal-actions"><button type="button" class="btn secondary" data-close-dialog>Cancel</button><button type="submit" class="btn primary">Import domains</button></div></form></dialog>
+    <dialog id="domainDialog" class="modal"><form id="domainForm" method="dialog"><div class="modal-head"><div><div class="eyebrow">PORTFOLIO MANAGEMENT</div><h2>Add a domain</h2><p>Look up registration data before saving. Missing expiry data remains unknown.</p></div><button type="button" class="icon-btn" data-close-dialog aria-label="Close">×</button></div><label>Domain name<input id="newDomainName" placeholder="example.com" required autocomplete="off"></label><div class="lookup-inline"><button id="precheckBtn" class="btn secondary" type="button">Check registration data</button><span id="precheckStatus" class="field-help">Optional, recommended</span></div><div id="precheckSummary" class="precheck-summary hidden"></div><label>Portfolio<input id="newDomainPortfolio" list="portfolioOptions" placeholder="Production, Client A…" value="Unassigned"><datalist id="portfolioOptions"></datalist></label><label>Notes <span class="muted">(optional)</span><textarea id="newDomainNotes" rows="2" placeholder="Renewal owner, client, or context"></textarea></label><div class="modal-actions"><button type="button" class="btn secondary" data-close-dialog>Cancel</button><button id="saveDomainBtn" type="submit" class="btn primary">Save domain</button></div></form></dialog>
+<dialog id="importDialog" class="modal">
+  <form id="importForm" method="dialog">
+
+```
+<div class="modal-head">
+  <div>
+    <div class="eyebrow">BULK IMPORT</div>
+    <h2>Import domains</h2>
+    <p>Upload a CSV file or paste your domain list.</p>
+  </div>
+  <button type="button" class="icon-btn" data-close-dialog aria-label="Close">×</button>
+</div>
+
+<!-- CSV FILE UPLOAD -->
+<div class="csv-upload-area" id="csvDropZone">
+
+  <div class="csv-upload-icon">↑</div>
+
+  <h3>Drag & drop your CSV file here</h3>
+
+  <p>Or choose a file from your computer</p>
+
+  <button type="button" class="btn secondary" id="browseCsvBtn">
+    Browse CSV file
+  </button>
+
+  <input
+    type="file"
+    id="csvFileInput"
+    accept=".csv,text/csv"
+    hidden
+  >
+
+  <div id="csvFileName" class="csv-file-name hidden"></div>
+
+</div>
+
+<div class="import-divider">
+  <span>OR</span>
+</div>
+
+<!-- EXISTING COPY AND PASTE OPTION -->
+<label for="importText">Copy and paste your domains</label>
+
+<textarea
+  id="importText"
+  rows="7"
+  placeholder="example.com, Production, Main website&#10;example.org, Client A, Renewal contact"
+></textarea>
+
+<p class="field-help">
+  Supported CSV columns: domain, portfolio, notes.
+  You can also paste one domain per line.
+</p>
+
+<div class="modal-actions">
+  <button type="button" class="btn secondary" data-close-dialog>
+    Cancel
+  </button>
+
+  <button type="submit" class="btn primary">
+    Import domains
+  </button>
+</div>
+```
+
+  </form>
+</dialog>
   <dialog id="portfolioDialog" class="modal compact-modal"><form id="portfolioForm" method="dialog"><div class="modal-head"><div><div class="eyebrow">ORGANIZATION</div><h2>New portfolio</h2></div><button type="button" class="icon-btn" data-close-dialog>×</button></div><label>Portfolio name<input id="portfolioName" required placeholder="e.g. Client Projects"></label><div class="modal-actions"><button type="button" class="btn secondary" data-close-dialog>Cancel</button><button type="submit" class="btn primary">Create portfolio</button></div></form></dialog>
   <script src="app.js"></script>
 </body>
