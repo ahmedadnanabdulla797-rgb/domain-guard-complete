@@ -1131,69 +1131,136 @@
   // IMPORT DOMAINS
   // =====================================
 
-  async function importDomains(e) {
-    e.preventDefault();
+ async function importDomains(e) {
+  e.preventDefault();
 
-    const raw = $('importText').value.trim();
-    if (!raw) return;
+  const raw = $('importText').value.trim();
+  if (!raw) return;
 
-    const lines = raw.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  const lines = raw.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+
+  const newDomains = [];
+  const seen = new Set(
+    state.domains.map(d => d.domain_name.toLowerCase())
+  );
+
+  for (const line of lines) {
+    const parts = line.split(',').map(x => x.trim());
+    const domain = validDomain(parts[0]);
+
+    if (!domain || seen.has(domain.toLowerCase())) continue;
+
+    seen.add(domain.toLowerCase());
+
+    newDomains.push({
+      domain,
+      portfolio: parts[1] || 'Unassigned',
+      notes: parts.slice(2).join(',') || null
+    });
+  }
+
+  if (!newDomains.length) {
+    return toast(
+      'No new valid domains found. Existing and invalid domains were skipped.',
+      'error'
+    );
+  }
+
+  const importBtn = $('importForm').querySelector('[type="submit"]');
+
+  if (importBtn) {
+    importBtn.disabled = true;
+    importBtn.textContent = 'Checking domains...';
+  }
+
+  try {
     const rows = [];
-    const seen = new Set(state.domains.map(d => d.domain_name));
+    const batchSize = 5;
 
-    for (const line of lines) {
-      const parts = line.split(',').map(x => x.trim());
-      const domain = validDomain(parts[0]);
+    for (let i = 0; i < newDomains.length; i += batchSize) {
+      const batch = newDomains.slice(i, i + batchSize);
 
-      if (!domain || seen.has(domain)) continue;
-
-      seen.add(domain);
-
-      rows.push({
-        owner_id: state.user.id,
-        domain_name: domain,
-        tld: domain.split('.').pop(),
-        portfolio: parts[1] || 'Unassigned',
-        notes: parts.slice(2).join(',') || null,
-        domain_status: 'pending',
-        nameservers: [],
-        expiration_date: null,
-        registration_date: null,
-        next_check_at: new Date().toISOString()
-      });
-    }
-
-    if (!rows.length) {
-      return toast(
-        'No new valid domains found. Existing and invalid domains were skipped.',
-        'error'
-      );
-    }
-
-    try {
-      const { data, error } = await client
-        .from('domains')
-        .insert(rows)
-        .select();
-
-      if (error) throw error;
-
-      state.domains.push(...data);
-
-      $('importDialog').close();
-      $('importText').value = '';
-
-      renderAll();
-
-      toast(
-        `Imported ${data.length} domain(s). Expiry data will be fetched by scheduled monitoring.`,
-        'success'
+      const results = await Promise.all(
+        batch.map(async item => {
+          try {
+            const lookup = await rdapLookup(item.domain);
+            return { ...item, lookup };
+          } catch (error) {
+            console.warn(
+              `RDAP lookup failed for ${item.domain}:`,
+              error.message
+            );
+            return { ...item, lookup: null };
+          }
+        })
       );
 
-    } catch (err) {
-      toast(err.message, 'error');
+      for (const item of results) {
+        const lookup = item.lookup;
+
+        rows.push({
+          owner_id: state.user.id,
+          domain_name: item.domain,
+          tld: item.domain.split('.').pop(),
+          portfolio: item.portfolio,
+          notes: item.notes,
+          registrar_name: lookup?.registrar_name || null,
+          registration_date: lookup?.registration_date || null,
+          expiration_date: lookup?.expiration_date || null,
+          nameservers: lookup?.nameservers || [],
+          domain_status: lookup
+            ? ((lookup.status_codes || []).join(', ') || 'unknown')
+            : 'pending',
+          next_check_at: new Date().toISOString()
+        });
+      }
+
+      if (importBtn) {
+        importBtn.textContent =
+          `Checking ${Math.min(i + batchSize, newDomains.length)} of ${newDomains.length}...`;
+      }
+    }
+
+    const { data, error } = await client
+      .from('domains')
+      .insert(rows)
+      .select();
+
+    if (error) throw error;
+
+    state.domains.push(...data);
+
+    $('importDialog').close();
+    $('importText').value = '';
+
+    if ($('csvFileName')) {
+      $('csvFileName').textContent = '';
+      $('csvFileName').classList.add('hidden');
+    }
+
+    renderAll();
+
+    const successful = rows.filter(
+      row => row.domain_status !== 'pending'
+    ).length;
+
+    const failed = rows.length - successful;
+
+    toast(
+      `Imported ${data.length} domains. RDAP information retrieved for ${successful}; ${failed} need another check.`,
+      'success'
+    );
+
+  } catch (err) {
+    toast(`Import failed: ${err.message}`, 'error');
+
+  } finally {
+    if (importBtn) {
+      importBtn.disabled = false;
+      importBtn.textContent = 'Import domains';
     }
   }
+}
 
   // =====================================
   // CSV FILE UPLOAD AND DRAG & DROP
