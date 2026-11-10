@@ -40,14 +40,27 @@
 
   const DEFAULT_THRESHOLDS = [30, 14, 7, 3, 1, 0];
 
-  function toast(message, type = 'info') {
+   function toast(message, type = 'info') {
     const el = $('toast');
+    const activeDialog = document.querySelector('dialog[open]');
+
+    if (activeDialog && !activeDialog.contains(el)) {
+      activeDialog.appendChild(el);
+    }
+
     el.textContent = message;
     el.className = `toast show ${type}`;
-    clearTimeout(toast.timer);
-    toast.timer = setTimeout(() => el.className = 'toast', 3600);
-  }
 
+    clearTimeout(toast.timer);
+
+    toast.timer = setTimeout(() => {
+      el.className = 'toast';
+
+      if (el.parentElement?.tagName === 'DIALOG') {
+        document.body.appendChild(el);
+      }
+    }, 3600);
+  } 
   function esc(value = '') {
     return String(value).replace(/[&<>"']/g, c => ({
       '&': '&amp;',
