@@ -1131,15 +1131,15 @@
   // IMPORT DOMAINS
   // =====================================
 
- async function importDomains(e) {
+async function importDomains(e) {
   e.preventDefault();
 
   const raw = $('importText').value.trim();
   if (!raw) return;
 
   const lines = raw.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
-
   const newDomains = [];
+
   const seen = new Set(
     state.domains.map(d => d.domain_name.toLowerCase())
   );
@@ -1160,10 +1160,7 @@
   }
 
   if (!newDomains.length) {
-    return toast(
-      'No new valid domains found. Existing and invalid domains were skipped.',
-      'error'
-    );
+    return toast('No new valid domains found. Existing and invalid domains were skipped.', 'error');
   }
 
   const importBtn = $('importForm').querySelector('[type="submit"]');
@@ -1186,10 +1183,7 @@
             const lookup = await rdapLookup(item.domain);
             return { ...item, lookup };
           } catch (error) {
-            console.warn(
-              `RDAP lookup failed for ${item.domain}:`,
-              error.message
-            );
+            console.warn(`RDAP lookup failed for ${item.domain}:`, error.message);
             return { ...item, lookup: null };
           }
         })
@@ -1197,20 +1191,21 @@
 
       for (const item of results) {
         const lookup = item.lookup;
+        const checkedAt = lookup ? new Date().toISOString() : null;
 
         rows.push({
           owner_id: state.user.id,
           domain_name: item.domain,
           tld: item.domain.split('.').pop(),
-          portfolio: item.portfolio,
-          notes: item.notes,
           registrar_name: lookup?.registrar_name || null,
           registration_date: lookup?.registration_date || null,
           expiration_date: lookup?.expiration_date || null,
           nameservers: lookup?.nameservers || [],
-          domain_status: lookup
-            ? ((lookup.status_codes || []).join(', ') || 'unknown')
-            : 'pending',
+          domain_status: (lookup?.status_codes || []).join(', ') || 'unknown',
+          portfolio: item.portfolio,
+          notes: item.notes,
+          data_source: lookup?.data_source || null,
+          last_checked_at: checkedAt,
           next_check_at: new Date().toISOString()
         });
       }
@@ -1241,13 +1236,13 @@
     renderAll();
 
     const successful = rows.filter(
-      row => row.domain_status !== 'pending'
+      row => row.last_checked_at !== null
     ).length;
 
     const failed = rows.length - successful;
 
     toast(
-      `Imported ${data.length} domains. RDAP information retrieved for ${successful}; ${failed} need another check.`,
+      `Imported ${data.length} domains. RDAP checked ${successful}; ${failed} need another check.`,
       'success'
     );
 
@@ -1261,7 +1256,6 @@
     }
   }
 }
-
   // =====================================
   // CSV FILE UPLOAD AND DRAG & DROP
   // =====================================
