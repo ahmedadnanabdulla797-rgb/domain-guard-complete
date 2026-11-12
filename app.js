@@ -1,519 +1,47 @@
 (() => {
   'use strict';
-
   const cfg = window.DOMAIN_GUARD_CONFIG || {};
-  const configured = Boolean(
-    cfg.SUPABASE_URL &&
-    cfg.SUPABASE_ANON_KEY &&
-    !cfg.SUPABASE_URL.includes('YOUR_PROJECT_ID') &&
-    !cfg.SUPABASE_ANON_KEY.includes('YOUR_SUPABASE')
-  );
-
-  const client = configured && window.supabase
-    ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, {
-        auth: {
-          persistSession: true,
-          autoRefreshToken: true,
-          detectSessionInUrl: true
-        }
-      })
-    : null;
-
+  const configured = Boolean(cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY && !cfg.SUPABASE_URL.includes('YOUR_PROJECT_ID') && !cfg.SUPABASE_ANON_KEY.includes('YOUR_SUPABASE'));
+  const client = configured && window.supabase ? window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } }) : null;
   const $ = (id) => document.getElementById(id);
-
-  const state = {
-    user: null,
-    session: null,
-    domains: [],
-    alerts: [],
-    deliveries: [],
-    portfolios: [],
-    prefs: null,
-    page: 'dashboard',
-    dark: localStorage.getItem('dg-theme') === 'dark',
-    lookup: null,
-    addLookup: null,
-    calendarDate: new Date(),
-    authMode: 'login',
-    loading: false
-  };
-
+  const state = { user: null, session: null, domains: [], alerts: [], deliveries: [], portfolios: [], prefs: null, page: 'dashboard', dark: localStorage.getItem('dg-theme') === 'dark', lookup: null, addLookup: null, calendarDate: new Date(), authMode: 'login', loading: false, selectedDomainIds: new Set() };
   const DEFAULT_THRESHOLDS = [30, 14, 7, 3, 1, 0];
 
-   function toast(message, type = 'info') {
-    const el = $('toast');
-    const activeDialog = document.querySelector('dialog[open]');
-
-    if (activeDialog && !activeDialog.contains(el)) {
-      activeDialog.appendChild(el);
-    }
-
-    el.textContent = message;
-    el.className = `toast show ${type}`;
-
-    clearTimeout(toast.timer);
-
-    toast.timer = setTimeout(() => {
-      el.className = 'toast';
-
-      if (el.parentElement?.tagName === 'DIALOG') {
-        document.body.appendChild(el);
-      }
-    }, 3600);
-  } 
-  function esc(value = '') {
-    return String(value).replace(/[&<>"']/g, c => ({
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;'
-    }[c]));
-  }
-
-  function validDomain(raw) {
-    const s = String(raw || '')
-      .trim()
-      .toLowerCase()
-      .replace(/^https?:\/\//, '')
-      .replace(/\/.*$/, '')
-      .replace(/:\d+$/, '')
-      .replace(/\.$/, '');
-
-    if (!s || s.length > 253 || s.includes(' ')) return null;
-
-    const labels = s.split('.');
-
-    if (
-      labels.length < 2 ||
-      labels.some(x =>
-        !x ||
-        x.length > 63 ||
-        !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(x)
-      )
-    ) return null;
-
-    return s;
-  }
-
-  function dateOnly(v) {
-    if (!v) return null;
-    const d = new Date(v);
-    if (Number.isNaN(d.getTime())) return null;
-    return d.toISOString().slice(0, 10);
-  }
-
-  function daysRemaining(date) {
-    if (!date) return null;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const expiry = new Date(`${date}T00:00:00`);
-    return Math.ceil((expiry - today) / 86400000);
-  }
-
-  function statusFor(domain) {
-    const days = daysRemaining(domain.expiration_date);
-    if (domain.last_check_error) return 'error';
-    if (days === null) return 'unknown';
-    if (days < 0) return 'expired';
-    if (days <= 7) return 'critical';
-    if (days <= 30) return 'warning';
-    return 'healthy';
-  }
-
-  function statusLabel(status) {
-    return ({
-      healthy: 'Healthy',
-      warning: 'Expiring soon',
-      critical: 'Critical',
-      expired: 'Expired',
-      unknown: 'Unknown expiry',
-      error: 'Check failed'
-    })[status] || status;
-  }
-
-  function badge(status) {
-    const normalized = [
-      'healthy', 'warning', 'critical', 'expired', 'unknown', 'error'
-    ].includes(status) ? status : 'neutral';
-
-    return `<span class="badge ${
-      normalized === 'unknown' || normalized === 'error'
-        ? 'neutral'
-        : normalized
-    }">${esc(statusLabel(status))}</span>`;
-  }
-
-  function prettyDate(value) {
-    if (!value) return 'Not available';
-    const d = new Date(`${dateOnly(value)}T00:00:00`);
-    return Number.isNaN(d.getTime())
-      ? 'Not available'
-      : d.toLocaleDateString(undefined, {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric'
-        });
-  }
-
-  function daysText(d) {
-    const n = daysRemaining(d.expiration_date);
-    if (n === null) return 'Unknown';
-    if (n < 0) return `${Math.abs(n)} days ago`;
-    if (n === 0) return 'Today';
-    return `${n} day${n === 1 ? '' : 's'}`;
-  }
-
-  function initial(name) {
-    return (name || '?').replace(/^www\./, '').charAt(0).toUpperCase();
-  }
-
-  function showTheme() {
-    document.documentElement.classList.toggle('dark', state.dark);
-    localStorage.setItem('dg-theme', state.dark ? 'dark' : 'light');
-    $('themeToggle').textContent = state.dark ? '☼' : '☾';
-    $('settingsThemeToggle').checked = state.dark;
-  }
-
-  function authView() {
-    $('authView').classList.remove('hidden');
-    $('appView').classList.add('hidden');
-  }
-
-  function appView() {
-    $('authView').classList.add('hidden');
-    $('appView').classList.remove('hidden');
-  }
-
-  function setAuthMode(mode) {
-    state.authMode = mode;
-    const login = mode === 'login';
-
-    $('authTitle').textContent = login
-      ? 'Welcome back'
-      : mode === 'signup'
-        ? 'Create your account'
-        : 'Reset your password';
-
-    $('authSubtitle').textContent = login
-      ? 'Sign in to manage your domain portfolio.'
-      : mode === 'signup'
-        ? 'Create a secure workspace for your domains.'
-        : 'We will send you a password reset link.';
-
-    $('authSubmit').textContent = login
-      ? 'Sign in'
-      : mode === 'signup'
-        ? 'Create account'
-        : 'Send reset link';
-
-    $('passwordLabel').classList.toggle('hidden', mode === 'forgot');
-    $('authPassword').required = mode !== 'forgot';
-    $('authModeToggle').textContent = login
-      ? 'Create an account'
-      : 'Back to sign in';
-
-    $('forgotBtn').classList.toggle('hidden', mode !== 'login');
-  }
-
-  async function handleAuthSubmit(e) {
-    e.preventDefault();
-
-    if (!client) {
-      toast('Add your Supabase URL and anon key to config.js first.', 'error');
-      return;
-    }
-
-    const email = $('authEmail').value.trim();
-    const password = $('authPassword').value;
-    const btn = $('authSubmit');
-
-    btn.disabled = true;
-
-    try {
-      let result;
-
-      if (state.authMode === 'signup') {
-        result = await client.auth.signUp({
-          email,
-          password,
-          options: { emailRedirectTo: location.origin }
-        });
-      } else if (state.authMode === 'forgot') {
-        result = await client.auth.resetPasswordForEmail(email, {
-          redirectTo: location.origin
-        });
-      } else {
-        result = await client.auth.signInWithPassword({ email, password });
-      }
-
-      if (result.error) throw result.error;
-
-      if (state.authMode === 'signup') {
-        toast('Account created. Check your email if verification is enabled.', 'success');
-        setAuthMode('login');
-      } else if (state.authMode === 'forgot') {
-        toast('If the account exists, a password reset email has been sent.', 'success');
-        setAuthMode('login');
-      } else {
-        state.session = result.data.session;
-        state.user = result.data.user;
-        await afterSignIn();
-      }
-    } catch (err) {
-      toast(err.message || 'Authentication failed.', 'error');
-    } finally {
-      btn.disabled = false;
-    }
-  }
-
-  async function signOut() {
-    if (client) await client.auth.signOut();
-    state.user = null;
-    state.session = null;
-    state.domains = [];
-    state.alerts = [];
-    authView();
-    toast('Signed out.');
-  }
-
-  async function afterSignIn() {
-    if (!state.user) {
-      authView();
-      return;
-    }
-
-    appView();
-    $('workspaceEmail').textContent = state.user.email || 'Authenticated user';
-    $('settingsEmail').textContent = state.user.email || '—';
-    $('settingsUserId').textContent = state.user.id;
-    $('userInitials').textContent = (state.user.email || 'U').slice(0, 1).toUpperCase();
-
-    await loadWorkspace();
-  }
-
-  async function loadWorkspace() {
-    if (!client || !state.user) return;
-
-    $('lastSyncLabel').textContent = 'Syncing workspace…';
-
-    try {
-      const [d, a, dl, p, pref] = await Promise.all([
-        client.from('domains').select('*').order('expiration_date', {
-          ascending: true,
-          nullsFirst: false
-        }),
-        client.from('alerts').select('*').order('created_at', {
-          ascending: false
-        }).limit(100),
-        client.from('notification_deliveries').select('*').order('created_at', {
-          ascending: false
-        }).limit(100),
-        client.from('portfolios').select('*').order('name'),
-        client.from('notification_preferences').select('*').maybeSingle()
-      ]);
-
-      if (d.error) throw d.error;
-
-      state.domains = d.data || [];
-      state.alerts = a.error ? [] : (a.data || []);
-      state.deliveries = dl.error ? [] : (dl.data || []);
-      state.portfolios = p.error ? [] : (p.data || []);
-      state.prefs = pref.error ? null : pref.data;
-
-      if (!state.prefs) {
-        state.prefs = {
-          email_enabled: true,
-          email_recipient: state.user.email || '',
-          telegram_enabled: false,
-          telegram_chat_id: '',
-          notify_days_before: DEFAULT_THRESHOLDS
-        };
-      }
-
-      fillPrefs();
-      renderAll();
-
-      $('lastSyncLabel').textContent = 'Synced just now';
-      $('updatedLabel').textContent =
-        `Updated ${new Date().toLocaleTimeString([], {
-          hour: '2-digit',
-          minute: '2-digit'
-        })}`;
-
-      $('lastSyncDetail').textContent = new Date().toLocaleString([], {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-
-    } catch (err) {
-      toast(`Could not load workspace: ${err.message}`, 'error');
-      $('lastSyncLabel').textContent = 'Sync failed';
-    }
-  }
-
-  function fillPrefs() {
-    const p = state.prefs || {};
-
-    $('telegramChatId').value = p.telegram_chat_id || '';
-    $('telegramEnabled').checked = !!p.telegram_enabled;
-    $('notifyEmail').value = p.email_recipient || state.user?.email || '';
-    $('emailEnabled').checked = p.email_enabled !== false;
-
-    const days = p.notify_days_before || DEFAULT_THRESHOLDS;
-
-    document.querySelectorAll('.threshold-check').forEach(el => {
-      el.checked = days.includes(Number(el.value));
-    });
-
-    $('telegramStatus').textContent =
-      p.telegram_enabled && p.telegram_chat_id ? 'Enabled' : 'Not configured';
-
-    $('telegramStatus').className =
-      `badge ${p.telegram_enabled && p.telegram_chat_id ? 'healthy' : 'neutral'}`;
-
-    $('emailStatus').textContent =
-      p.email_enabled && p.email_recipient ? 'Enabled' : 'Not configured';
-
-    $('emailStatus').className =
-      `badge ${p.email_enabled && p.email_recipient ? 'healthy' : 'neutral'}`;
-  }
-
-  async function savePrefs(patch, success = 'Settings saved.') {
-    if (!client || !state.user) {
-      return toast('Connect Supabase and sign in first.', 'error');
-    }
-
-    const row = {
-      ...(state.prefs || {}),
-      ...patch,
-      user_id: state.user.id,
-      updated_at: new Date().toISOString()
-    };
-
-    delete row.id;
-
-    const { data, error } = await client
-      .from('notification_preferences')
-      .upsert(row, { onConflict: 'user_id' })
-      .select()
-      .single();
-
-    if (error) {
-      toast(error.message, 'error');
-      return false;
-    }
-
-    state.prefs = data;
-    fillPrefs();
-    toast(success, 'success');
-    return true;
-  }
-
-  function renderAll() {
-    renderDashboard();
-    renderDomains();
-    renderDistribution();
-    renderAlerts();
-    renderPortfolios();
-    updateCounts();
-    renderCalendar();
-    updateFilters();
-  }
-
-  function updateCounts() {
-    $('navDomainCount').textContent = state.domains.length;
-    const unread = state.alerts.filter(a => !a.is_read).length;
-    $('unreadCount').textContent = unread;
-    $('unreadCount').classList.toggle('hidden', unread === 0);
-  }
-
-  function renderDashboard() {
-    const items = state.domains;
-    const statuses = items.map(d => statusFor(d));
-
-    $('metricTotal').textContent = items.length;
-
-    $('metric7').textContent = items.filter(d => {
-      const n = daysRemaining(d.expiration_date);
-      return n !== null && n >= 0 && n <= 7;
-    }).length;
-
-    $('metric30').textContent = items.filter(d => {
-      const n = daysRemaining(d.expiration_date);
-      return n !== null && n >= 0 && n <= 30;
-    }).length;
-
-    $('metricExpired').textContent =
-      items.filter(d => statusFor(d) === 'expired').length;
-
-    $('unknownExpiry').textContent =
-      items.filter(d => !d.expiration_date).length;
-
-    const attention = items
-      .filter(d => ['critical', 'warning', 'expired', 'error'].includes(statusFor(d)))
-      .sort((a, b) =>
-        (daysRemaining(a.expiration_date) ?? 99999) -
-        (daysRemaining(b.expiration_date) ?? 99999)
-      )
-      .slice(0, 6);
-
-    $('attentionTable').innerHTML = attention.length
-      ? domainTable(attention, false)
-      : `<div class="empty-state">${
-          items.length
-            ? 'No domains currently require attention.'
-            : 'No domains yet. Add your first domain to begin monitoring.'
-        }</div>`;
-
-    const recent = state.alerts.slice(0, 4);
-
-    $('recentAlerts').innerHTML = recent.length
-      ? recent.map(alertMarkup).join('')
-      : '<div class="empty-state">No alerts have been created yet.</div>';
-  }
-
-  function renderDistribution() {
-    const counts = {
-      healthy: 0,
-      warning: 0,
-      critical: 0,
-      expired: 0,
-      unknown: 0
-    };
-
-    state.domains.forEach(d => {
-      const s = statusFor(d);
-      counts[counts[s] !== undefined ? s : 'unknown']++;
-    });
-
-    const total = state.domains.length || 1;
-
-    const rows = [
-      ['Healthy', 'healthy', counts.healthy, 'green'],
-      ['Expiring soon', 'warning', counts.warning, 'amber'],
-      ['Critical', 'critical', counts.critical, 'red'],
-      ['Expired', 'expired', counts.expired, 'gray'],
-      ['Unknown expiry', 'unknown', counts.unknown, 'gray']
-    ];
-
-    $('statusDistribution').innerHTML = rows.map(([label, key, n, color]) =>
-      `<div class="dist-row">
-        <span class="dist-label">${label}</span>
-        <div class="dist-track">
-          <div class="dist-fill ${color}" style="width:${Math.round(n / total * 100)}%"></div>
-        </div>
-        <strong class="dist-number">${n}</strong>
-      </div>`
-    ).join('');
-  }
-
+  function toast(message, type = 'info') { const el = $('toast'); el.textContent = message; el.className = `toast show ${type}`; clearTimeout(toast.timer); toast.timer = setTimeout(() => el.className = 'toast', 3600); }
+  function esc(value = '') { return String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+  function validDomain(raw) { const s = String(raw || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, '').replace(/\.$/, ''); if (!s || s.length > 253 || s.includes(' ')) return null; const labels = s.split('.'); if (labels.length < 2 || labels.some(x => !x || x.length > 63 || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(x))) return null; return s; }
+  function dateOnly(v) { if (!v) return null; const d = new Date(v); if (Number.isNaN(d.getTime())) return null; return d.toISOString().slice(0, 10); }
+  function daysRemaining(date) { if (!date) return null; const today = new Date(); today.setHours(0,0,0,0); const expiry = new Date(`${date}T00:00:00`); return Math.ceil((expiry - today) / 86400000); }
+  function statusFor(domain) { const days = daysRemaining(domain.expiration_date); if (domain.last_check_error) return 'error'; if (days === null) return 'unknown'; if (days < 0) return 'expired'; if (days <= 7) return 'critical'; if (days <= 30) return 'warning'; return 'healthy'; }
+  function statusLabel(status) { return ({ healthy: 'Healthy', warning: 'Expiring soon', critical: 'Critical', expired: 'Expired', unknown: 'Unknown expiry', error: 'Check failed' })[status] || status; }
+  function badge(status) { const normalized = ['healthy','warning','critical','expired','unknown','error'].includes(status) ? status : 'neutral'; return `<span class="badge ${normalized === 'unknown' || normalized === 'error' ? 'neutral' : normalized}">${esc(statusLabel(status))}</span>`; }
+  function prettyDate(value) { if (!value) return 'Not available'; const d = new Date(`${dateOnly(value)}T00:00:00`); return Number.isNaN(d.getTime()) ? 'Not available' : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); }
+  function daysText(d) { const n = daysRemaining(d.expiration_date); if (n === null) return 'Unknown'; if (n < 0) return `${Math.abs(n)} days ago`; if (n === 0) return 'Today'; return `${n} day${n === 1 ? '' : 's'}`; }
+  function initial(name) { return (name || '?').replace(/^www\./,'').charAt(0).toUpperCase(); }
+  function showTheme() { document.documentElement.classList.toggle('dark', state.dark); localStorage.setItem('dg-theme', state.dark ? 'dark' : 'light'); $('themeToggle').textContent = state.dark ? '☼' : '☾'; $('settingsThemeToggle').checked = state.dark; }
+  function authView() { $('authView').classList.remove('hidden'); $('appView').classList.add('hidden'); }
+  function appView() { $('authView').classList.add('hidden'); $('appView').classList.remove('hidden'); }
+  function setAuthMode(mode) { state.authMode = mode; const login = mode === 'login'; $('authTitle').textContent = login ? 'Welcome back' : mode === 'signup' ? 'Create your account' : 'Reset your password'; $('authSubtitle').textContent = login ? 'Sign in to manage your domain portfolio.' : mode === 'signup' ? 'Create a secure workspace for your domains.' : 'We will send you a password reset link.'; $('authSubmit').textContent = login ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Send reset link'; $('passwordLabel').classList.toggle('hidden', mode === 'forgot'); $('authPassword').required = mode !== 'forgot'; $('authModeToggle').textContent = login ? 'Create an account' : 'Back to sign in'; $('forgotBtn').classList.toggle('hidden', mode !== 'login'); }
+  async function handleAuthSubmit(e) { e.preventDefault(); if (!client) { toast('Add your Supabase URL and anon key to config.js first.', 'error'); return; } const email = $('authEmail').value.trim(); const password = $('authPassword').value; const btn = $('authSubmit'); btn.disabled = true; try { let result; if (state.authMode === 'signup') result = await client.auth.signUp({ email, password, options: { emailRedirectTo: location.origin } }); else if (state.authMode === 'forgot') result = await client.auth.resetPasswordForEmail(email, { redirectTo: location.origin }); else result = await client.auth.signInWithPassword({ email, password }); if (result.error) throw result.error; if (state.authMode === 'signup') { toast('Account created. Check your email if verification is enabled.', 'success'); setAuthMode('login'); } else if (state.authMode === 'forgot') { toast('If the account exists, a password reset email has been sent.', 'success'); setAuthMode('login'); } else { state.session = result.data.session; state.user = result.data.user; await afterSignIn(); } } catch (err) { toast(err.message || 'Authentication failed.', 'error'); } finally { btn.disabled = false; } }
+  async function signOut() { if (client) await client.auth.signOut(); state.user = null; state.session = null; state.domains = []; state.alerts = []; authView(); toast('Signed out.'); }
+  async function afterSignIn() { if (!state.user) { authView(); return; } appView(); $('workspaceEmail').textContent = state.user.email || 'Authenticated user'; $('settingsEmail').textContent = state.user.email || '—'; $('settingsUserId').textContent = state.user.id; $('userInitials').textContent = (state.user.email || 'U').slice(0,1).toUpperCase(); await loadWorkspace(); }
+  async function loadWorkspace() { if (!client || !state.user) return; $('lastSyncLabel').textContent = 'Syncing workspace…'; try { const [d, a, dl, p, pref] = await Promise.all([client.from('domains').select('*').order('expiration_date', { ascending: true, nullsFirst: false }), client.from('alerts').select('*').order('created_at', { ascending: false }).limit(100), client.from('notification_deliveries').select('*').order('created_at', { ascending: false }).limit(100), client.from('portfolios').select('*').order('name'), client.from('notification_preferences').select('*').maybeSingle()]); if (d.error) throw d.error; state.domains = d.data || []; state.alerts = a.error ? [] : (a.data || []); state.deliveries = dl.error ? [] : (dl.data || []); state.portfolios = p.error ? [] : (p.data || []); state.prefs = pref.error ? null : pref.data; if (!state.prefs) state.prefs = { email_enabled: true, email_recipient: state.user.email || '', telegram_enabled: false, telegram_chat_id: '', notify_days_before: DEFAULT_THRESHOLDS }; fillPrefs(); renderAll(); $('lastSyncLabel').textContent = 'Synced just now'; $('updatedLabel').textContent = `Updated ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`; $('lastSyncDetail').textContent = new Date().toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}); } catch (err) { toast(`Could not load workspace: ${err.message}`, 'error'); $('lastSyncLabel').textContent = 'Sync failed'; } }
+  function fillPrefs() { const p = state.prefs || {}; $('telegramChatId').value = p.telegram_chat_id || ''; $('telegramEnabled').checked = !!p.telegram_enabled; $('notifyEmail').value = p.email_recipient || state.user?.email || ''; $('emailEnabled').checked = p.email_enabled !== false; const days = p.notify_days_before || DEFAULT_THRESHOLDS; document.querySelectorAll('.threshold-check').forEach(el => el.checked = days.includes(Number(el.value))); $('telegramStatus').textContent = p.telegram_enabled && p.telegram_chat_id ? 'Enabled' : 'Not configured'; $('telegramStatus').className = `badge ${p.telegram_enabled && p.telegram_chat_id ? 'healthy' : 'neutral'}`; $('emailStatus').textContent = p.email_enabled && p.email_recipient ? 'Enabled' : 'Not configured'; $('emailStatus').className = `badge ${p.email_enabled && p.email_recipient ? 'healthy' : 'neutral'}`; }
+  async function savePrefs(patch, success = 'Settings saved.') { if (!client || !state.user) return toast('Connect Supabase and sign in first.', 'error'); const row = { ...(state.prefs || {}), ...patch, user_id: state.user.id, updated_at: new Date().toISOString() }; delete row.id; const { data, error } = await client.from('notification_preferences').upsert(row, { onConflict: 'user_id' }).select().single(); if (error) { toast(error.message, 'error'); return false; } state.prefs = data; fillPrefs(); toast(success, 'success'); return true; }
+  function renderAll() { renderDashboard(); renderDomains(); renderDistribution(); renderAlerts(); renderPortfolios(); updateCounts(); renderCalendar(); updateFilters(); }
+  function updateCounts() { $('navDomainCount').textContent = state.domains.length; const unread = state.alerts.filter(a => !a.is_read).length; $('unreadCount').textContent = unread; $('unreadCount').classList.toggle('hidden', unread === 0); }
+  function renderDashboard() { const items = state.domains; const statuses = items.map(d => statusFor(d)); $('metricTotal').textContent = items.length; $('metric7').textContent = items.filter(d => { const n = daysRemaining(d.expiration_date); return n !== null && n >= 0 && n <= 7; }).length; $('metric30').textContent = items.filter(d => { const n = daysRemaining(d.expiration_date); return n !== null && n >= 0 && n <= 30; }).length; $('metricExpired').textContent = items.filter(d => statusFor(d) === 'expired').length; $('unknownExpiry').textContent = items.filter(d => !d.expiration_date).length; const attention = items.filter(d => ['critical','warning','expired','error'].includes(statusFor(d))).sort((a,b) => (daysRemaining(a.expiration_date) ?? 99999) - (daysRemaining(b.expiration_date) ?? 99999)).slice(0,6); $('attentionTable').innerHTML = attention.length ? domainTable(attention, false) : `<div class="empty-state">${items.length ? 'No domains currently require attention.' : 'No domains yet. Add your first domain to begin monitoring.'}</div>`; const recent = state.alerts.slice(0,4); $('recentAlerts').innerHTML = recent.length ? recent.map(alertMarkup).join('') : '<div class="empty-state">No alerts have been created yet.</div>'; }
+  function renderDistribution() { const counts = { healthy:0, warning:0, critical:0, expired:0, unknown:0 }; state.domains.forEach(d => { const s=statusFor(d); counts[counts[s] !== undefined ? s : 'unknown']++; }); const total = state.domains.length || 1; const rows = [['Healthy','healthy',counts.healthy,'green'],['Expiring soon','warning',counts.warning,'amber'],['Critical','critical',counts.critical,'red'],['Expired','expired',counts.expired,'gray'],['Unknown expiry','unknown',counts.unknown,'gray']]; $('statusDistribution').innerHTML = rows.map(([label,key,n,color])=>`<div class="dist-row"><span class="dist-label">${label}</span><div class="dist-track"><div class="dist-fill ${color}" style="width:${Math.round(n/total*100)}%"></div></div><strong class="dist-number">${n}</strong></div>`).join(''); }
   function domainTable(domains, actions = true) {
-    return `<table class="data-table">
+  return `
+    <table class="data-table">
       <thead>
         <tr>
+          ${actions ? `
+            <th>
+              <input type="checkbox" id="selectAllDomains" aria-label="Select all visible domains">
+            </th>
+          ` : ''}
           <th>Domain</th>
           <th>Expiry date</th>
           <th>Time remaining</th>
@@ -525,613 +53,338 @@
         ${domains.map(d => {
           const s = statusFor(d);
           const days = daysRemaining(d.expiration_date);
+          const selected = state.selectedDomainIds.has(d.id);
 
-          return `<tr>
-            <td>
-              <div class="domain-cell">
-                <div class="domain-favicon">${esc(initial(d.domain_name))}</div>
-                <div>
-                  <strong>${esc(d.domain_name)}</strong>
-                  <small>${esc(d.portfolio || 'Unassigned')} · ${esc(d.registrar_name || 'Registrar unknown')}</small>
+          return `
+            <tr class="${selected ? 'domain-selected' : ''}">
+              ${actions ? `
+                <td>
+                  <input
+                    type="checkbox"
+                    class="domain-select-checkbox"
+                    data-select-domain="${esc(d.id)}"
+                    ${selected ? 'checked' : ''}
+                    aria-label="Select ${esc(d.domain_name)}"
+                  >
+                </td>
+              ` : ''}
+
+              <td>
+                <div class="domain-cell">
+                  <div class="domain-favicon">${esc(initial(d.domain_name))}</div>
+                  <div>
+                    <strong>${esc(d.domain_name)}</strong>
+                    <small>${esc(d.portfolio || 'Unassigned')} · ${esc(d.registrar_name || 'Registrar unknown')}</small>
+                  </div>
                 </div>
-              </div>
-            </td>
-            <td>${prettyDate(d.expiration_date)}</td>
-            <td>
-              <span class="days-remaining ${
-                s === 'critical' || s === 'expired'
-                  ? 'critical'
-                  : s === 'warning'
-                    ? 'warning'
-                    : ''
-              }">${esc(daysText(d))}</span>
-            </td>
-            <td>${badge(s)}</td>
-            ${actions ? `<td>
-              <a class="table-action"
-                href="https://${esc(d.domain_name)}"
-                target="_blank"
-                rel="noopener noreferrer"
-                title="Open Website"
-                style="text-decoration:none;">↗ Open Website</a>
-              <button class="table-action"
-                title="Delete domain"
-                data-delete-domain="${esc(d.id)}"
-                data-domain-name="${esc(d.domain_name)}">×</button>
-            </td>` : ''}
-          </tr>`;
+              </td>
+
+              <td>${prettyDate(d.expiration_date)}</td>
+
+              <td>
+                <span class="days-remaining ${s === 'critical' || s === 'expired' ? 'critical' : s === 'warning' ? 'warning' : ''}">
+                  ${esc(daysText(d))}
+                </span>
+              </td>
+
+              <td>${badge(s)}</td>
+
+              ${actions ? `
+                <td>
+                  <a class="table-action" href="https://${esc(d.domain_name)}" target="_blank" rel="noopener noreferrer" title="Open Website" style="text-decoration:none;">↗ Open Website</a>
+                  <button class="table-action" title="Delete domain" data-delete-domain="${esc(d.id)}" data-domain-name="${esc(d.domain_name)}">×</button>
+                </td>
+              ` : ''}
+            </tr>
+          `;
         }).join('')}
       </tbody>
-    </table>`;
-  }
+    </table>
+  `;
+}
+function renderDomains() {
+  const q = ($('domainSearch')?.value || $('globalSearch')?.value || '').toLowerCase().trim();
+  const status = $('statusFilter')?.value || 'all';
+  const portfolio = $('portfolioFilter')?.value || 'all';
 
-  function renderDomains() {
-    const q = ($('domainSearch')?.value || $('globalSearch')?.value || '')
-      .toLowerCase()
-      .trim();
+  const list = state.domains
+    .filter(d =>
+      (!q || d.domain_name.toLowerCase().includes(q) ||
+      (d.registrar_name || '').toLowerCase().includes(q)) &&
+      (status === 'all' || statusFor(d) === status) &&
+      (portfolio === 'all' || (d.portfolio || 'Unassigned') === portfolio)
+    )
+    .sort((a, b) => (a.domain_name || '').localeCompare(b.domain_name || ''));
 
-    const status = $('statusFilter')?.value || 'all';
-    const portfolio = $('portfolioFilter')?.value || 'all';
+  $('domainsTable').innerHTML = list.length
+    ? domainTable(list, true)
+    : `<div class="empty-state">${state.domains.length ? 'No domains match your filters.' : 'No domains yet. Select “Add domain” to create your portfolio.'}</div>`;
 
-    const list = state.domains
-      .filter(d =>
-        (!q ||
-          d.domain_name.toLowerCase().includes(q) ||
-          (d.registrar_name || '').toLowerCase().includes(q)) &&
-        (status === 'all' || statusFor(d) === status) &&
-        (portfolio === 'all' || (d.portfolio || 'Unassigned') === portfolio)
-      )
-      .sort((a, b) =>
-        (a.domain_name || '').localeCompare(b.domain_name || '')
-      );
+  $('domainCountLabel').textContent =
+    `${list.length} of ${state.domains.length} domain${state.domains.length === 1 ? '' : 's'}`;
 
-    $('domainsTable').innerHTML = list.length
-      ? domainTable(list, true)
-      : `<div class="empty-state">${
-          state.domains.length
-            ? 'No domains match your filters.'
-            : 'No domains yet. Select “Add domain” to create your portfolio.'
-        }</div>`;
+  updateBulkActions(list);
+}
+function alertMarkup(a) { const isCritical = a.severity === 'critical' || /expired|7 day|1 day/i.test(a.title||''); const icon = isCritical ? '!' : /dns|change/i.test(a.title||'') ? '⌁' : '◷'; const cls = isCritical ? 'red' : 'amber'; return `<div class="activity-item"><div class="activity-icon ${cls}">${icon}</div><div class="activity-copy"><strong>${esc(a.title || 'Domain alert')}${a.is_read ? '' : ' <span class="badge neutral">New</span>'}</strong><p>${esc(a.message || '')}${a.domain_name ? ` · <b>${esc(a.domain_name)}</b>` : ''}</p></div><div class="activity-meta">${a.created_at ? new Date(a.created_at).toLocaleDateString() : ''}</div></div>`; }
+  function renderAlerts() { const filter = $('alertFilter')?.value || 'all'; const list = state.alerts.filter(a => filter === 'all' || (filter === 'unread' && !a.is_read) || (filter === 'critical' && a.severity === 'critical') || (filter === 'expiry' && /expir/i.test(a.alert_type || a.title || ''))); $('alertsList').innerHTML = list.length ? list.map(alertMarkup).join('') : '<div class="empty-state">No alerts match this filter.</div>'; const deliveries = state.deliveries || []; $('deliveryList').innerHTML = deliveries.length ? deliveries.map(d=>`<div class="activity-item"><div class="activity-icon ${d.status==='delivered'?'':'red'}">${d.channel==='email'?'✉':'➤'}</div><div class="activity-copy"><strong>${esc(d.channel)} notification ${esc(d.status)}</strong><p>Recipient: ${esc(d.recipient || 'not recorded')}${d.error_message ? ` · ${esc(d.error_message)}` : ''}</p></div><div class="activity-meta">${d.created_at ? new Date(d.created_at).toLocaleString() : ''}</div></div>`).join('') : '<div class="empty-state">No notification deliveries yet.</div>'; }
+  function renderPortfolios() { const names = new Map(); state.portfolios.forEach(p => names.set(p.name, { name:p.name, id:p.id, count:0 })); state.domains.forEach(d => { const n = d.portfolio || 'Unassigned'; if (!names.has(n)) names.set(n,{name:n,id:null,count:0}); names.get(n).count++; }); const values = [...names.values()]; $('portfolioGrid').innerHTML = values.length ? values.map(p=>`<article class="portfolio-card"><div class="portfolio-card-head"><div class="portfolio-icon">▤</div>${p.id?`<button class="table-action" data-delete-portfolio="${esc(p.id)}" data-portfolio-name="${esc(p.name)}" title="Delete portfolio">×</button>`:''}</div><h3>${esc(p.name)}</h3><p>${p.count} domain${p.count===1?'':'s'} assigned</p><div class="portfolio-stat"><span>Expiring in 30 days</span><strong>${state.domains.filter(d=>(d.portfolio||'Unassigned')===p.name && (daysRemaining(d.expiration_date)??999)>-1 && (daysRemaining(d.expiration_date)??999)<=30).length}</strong></div></article>`).join('') : '<div class="empty-state">Create a portfolio to organize domains by client or project.</div>'; }
+  function updateFilters() { const sel = $('portfolioFilter'); if (!sel) return; const value = sel.value; const names = [...new Set([...state.portfolios.map(p=>p.name),...state.domains.map(d=>d.portfolio || 'Unassigned')])].sort(); sel.innerHTML = '<option value="all">All portfolios</option>' + names.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join(''); sel.value = names.includes(value) ? value : 'all'; $('portfolioOptions').innerHTML = names.map(n=>`<option value="${esc(n)}"></option>`).join(''); }
+  function goPage(page) { state.page = page; document.querySelectorAll('.page').forEach(el=>el.classList.toggle('active', el.id === `page-${page}`)); document.querySelectorAll('.nav-item[data-page]').forEach(el=>el.classList.toggle('active', el.dataset.page === page)); const active = document.querySelector(`.nav-item[data-page="${page}"]`); $('pageCrumb').textContent = active ? active.textContent.trim().replace(/\d+$/,'').trim() : 'Overview'; if(page==='domains')renderDomains(); if(page==='alerts')renderAlerts(); if(page==='calendar')renderCalendar(); if(page==='portfolios')renderPortfolios(); $('sidebar').classList.remove('open'); $('mobileScrim').classList.remove('show'); window.scrollTo({top:0,behavior:'smooth'}); }
+  function renderCalendar() { const date = state.calendarDate; const year=date.getFullYear(),month=date.getMonth(); $('calendarMonth').textContent=date.toLocaleDateString(undefined,{month:'long',year:'numeric'}); const first=new Date(year,month,1); const start=new Date(year,month,1-first.getDay()); const weekdays=['Sun','Mon','Tue','Wed','Thu','Fri','Sat']; let html=weekdays.map(d=>`<div class="calendar-weekday">${d}</div>`).join(''); const today=dateOnly(new Date()); for(let i=0;i<42;i++){const day=new Date(start);day.setDate(start.getDate()+i);const key=dateOnly(day);const events=state.domains.filter(d=>d.expiration_date===key);html+=`<div class="calendar-day ${day.getMonth()!==month?'outside':''} ${key===today?'today':''}"><div class="calendar-day-number">${day.getDate()}</div>${events.slice(0,3).map(d=>`<button class="calendar-domain ${statusFor(d)}" title="${esc(d.domain_name)}" data-calendar-domain="${esc(d.domain_name)}">${esc(d.domain_name)}</button>`).join('')}${events.length>3?`<div class="muted">+${events.length-3} more</div>`:''}</div>`;} $('calendarGrid').innerHTML=html; }
+  function parseRdap(data, domain) { const events = data.events || []; const findDate = action => dateOnly(events.find(e=>e.eventAction===action)?.eventDate); const registrarEntity = (data.entities||[]).find(e=>(e.roles||[]).includes('registrar')); let registrar = ''; if(registrarEntity?.vcardArray?.[1]) { const v=registrarEntity.vcardArray[1]; registrar = v.find(row=>row[0]==='fn')?.[3] || v.find(row=>row[0]==='org')?.[3] || ''; } return { domain, registration_date:findDate('registration'), expiration_date:findDate('expiration'), registrar_name:registrar || null, nameservers:(data.nameservers||[]).map(ns=>ns.ldhName).filter(Boolean), status_codes:data.status||[], data_source:data.port43 || data.rdapConformance?.join(', ') || 'RDAP', raw:data } }
+  async function rdapLookup(raw) { const domain=validDomain(raw); if(!domain) throw new Error('Enter a valid domain name such as example.com.'); const response=await fetch(`https://rdap.org/domain/${encodeURIComponent(domain)}`,{headers:{Accept:'application/rdap+json, application/json'},cache:'no-store'}); if(response.status===404) throw new Error('No registration record was found. This does not prove the domain is available.'); if(!response.ok) throw new Error(`RDAP lookup failed (${response.status}). Try again later or check whether this TLD supports RDAP.`); const data=await response.json(); return parseRdap(data,domain); }
+function renderFinderResult(result, target = 'finderResult') {
+  const days = daysRemaining(result.expiration_date);
 
-    $('domainCountLabel').textContent =
-      `${list.length} of ${state.domains.length} domain${state.domains.length === 1 ? '' : 's'}`;
-  }
+  const status = result.expiration_date
+    ? (days < 0 ? 'Expired' : days <= 7 ? 'Critical' : days <= 30 ? 'Expiring soon' : 'Active')
+    : 'Expiry not published';
 
-  function alertMarkup(a) {
-    const isCritical =
-      a.severity === 'critical' || /expired|7 day|1 day/i.test(a.title || '');
+  const box = $(target);
+  const saveButtonId = target === 'overviewScanResult'
+    ? 'saveOverviewScanDomain'
+    : 'saveLookupDomain';
 
-    const icon = isCritical
-      ? '!'
-      : /dns|change/i.test(a.title || '')
-        ? '⌁'
-        : '◷';
+  box.classList.remove('hidden');
 
-    const cls = isCritical ? 'red' : 'amber';
-
-    return `<div class="activity-item">
-      <div class="activity-icon ${cls}">${icon}</div>
-      <div class="activity-copy">
-        <strong>${esc(a.title || 'Domain alert')}${a.is_read ? '' : ' <span class="badge neutral">New</span>'}</strong>
-        <p>${esc(a.message || '')}${a.domain_name ? ` · <b>${esc(a.domain_name)}</b>` : ''}</p>
+  box.innerHTML = `
+    <div class="result-banner">
+      <div>
+        <h2>${esc(result.domain)}</h2>
+        <p>Lookup completed · ${esc(result.data_source || 'RDAP')} · ${new Date().toLocaleString()}</p>
       </div>
-      <div class="activity-meta">${a.created_at ? new Date(a.created_at).toLocaleDateString() : ''}</div>
-    </div>`;
-  }
+      ${badge(result.expiration_date ? (days < 0 ? 'expired' : days <= 7 ? 'critical' : days <= 30 ? 'warning' : 'healthy') : 'unknown')}
+    </div>
 
-  function renderAlerts() {
-    const filter = $('alertFilter')?.value || 'all';
+    <div class="result-grid">
+      <div class="result-field"><span>Registration date</span><strong>${prettyDate(result.registration_date)}</strong></div>
+      <div class="result-field"><span>Expiration date</span><strong>${prettyDate(result.expiration_date)}</strong></div>
+      <div class="result-field"><span>Time remaining</span><strong>${result.expiration_date ? esc(days < 0 ? `${Math.abs(days)} days past expiry` : days === 0 ? 'Expires today' : `${days} days`) : 'Unknown'}</strong></div>
+      <div class="result-field"><span>Registrar</span><strong>${esc(result.registrar_name || 'Not disclosed')}</strong></div>
+      <div class="result-field"><span>Domain status</span><strong>${esc((result.status_codes || []).join(', ') || 'Not disclosed')}</strong></div>
+      <div class="result-field"><span>Nameservers</span><strong>${esc((result.nameservers || []).join(', ') || 'Not disclosed')}</strong></div>
+    </div>
 
-    const list = state.alerts.filter(a =>
-      filter === 'all' ||
-      (filter === 'unread' && !a.is_read) ||
-      (filter === 'critical' && a.severity === 'critical') ||
-      (filter === 'expiry' && /expir/i.test(a.alert_type || a.title || ''))
-    );
+    <div class="result-detail">
+      <h3>Registration record</h3>
+      <code>${esc(JSON.stringify({
+        domain: result.domain,
+        registrationDate: result.registration_date,
+        expirationDate: result.expiration_date,
+        registrar: result.registrar_name,
+        status: result.status_codes,
+        nameservers: result.nameservers
+      }, null, 2))}</code>
 
-    $('alertsList').innerHTML = list.length
-      ? list.map(alertMarkup).join('')
-      : '<div class="empty-state">No alerts match this filter.</div>';
+      <div style="margin-top:14px">
+        <button id="${saveButtonId}" class="btn primary" type="button">
+          ＋ Add to my domains
+        </button>
+      </div>
+    </div>
+  `;
 
-    const deliveries = state.deliveries || [];
+  $(saveButtonId).addEventListener('click', () => openAddWithLookup(result));
+}
+  async function handleOverviewScan(e) {
+  e.preventDefault();
 
-    $('deliveryList').innerHTML = deliveries.length
-      ? deliveries.map(d => `<div class="activity-item">
-          <div class="activity-icon ${d.status === 'delivered' ? '' : 'red'}">
-            ${d.channel === 'email' ? '✉' : '➤'}
-          </div>
-          <div class="activity-copy">
-            <strong>${esc(d.channel)} notification ${esc(d.status)}</strong>
-            <p>Recipient: ${esc(d.recipient || 'not recorded')}${d.error_message ? ` · ${esc(d.error_message)}` : ''}</p>
-          </div>
-          <div class="activity-meta">${d.created_at ? new Date(d.created_at).toLocaleString() : ''}</div>
-        </div>`).join('')
-      : '<div class="empty-state">No notification deliveries yet.</div>';
-  }
+  const btn = $('overviewScanBtn');
+  const resultBox = $('overviewScanResult');
 
-  function renderPortfolios() {
-    const names = new Map();
+  btn.disabled = true;
+  btn.textContent = 'Scanning…';
+  resultBox.classList.add('hidden');
 
-    state.portfolios.forEach(p =>
-      names.set(p.name, { name: p.name, id: p.id, count: 0 })
-    );
-
-    state.domains.forEach(d => {
-      const n = d.portfolio || 'Unassigned';
-
-      if (!names.has(n)) {
-        names.set(n, { name: n, id: null, count: 0 });
-      }
-
-      names.get(n).count++;
-    });
-
-    const values = [...names.values()];
-
-    $('portfolioGrid').innerHTML = values.length
-      ? values.map(p => `<article class="portfolio-card">
-          <div class="portfolio-card-head">
-            <div class="portfolio-icon">▤</div>
-            ${p.id ? `<button class="table-action"
-              data-delete-portfolio="${esc(p.id)}"
-              data-portfolio-name="${esc(p.name)}"
-              title="Delete portfolio">×</button>` : ''}
-          </div>
-          <h3>${esc(p.name)}</h3>
-          <p>${p.count} domain${p.count === 1 ? '' : 's'} assigned</p>
-          <div class="portfolio-stat">
-            <span>Expiring in 30 days</span>
-            <strong>${state.domains.filter(d =>
-              (d.portfolio || 'Unassigned') === p.name &&
-              (daysRemaining(d.expiration_date) ?? 999) > -1 &&
-              (daysRemaining(d.expiration_date) ?? 999) <= 30
-            ).length}</strong>
-          </div>
-        </article>`).join('')
-      : '<div class="empty-state">Create a portfolio to organize domains by client or project.</div>';
-  }
-
-  function updateFilters() {
-    const sel = $('portfolioFilter');
-    if (!sel) return;
-
-    const value = sel.value;
-
-    const names = [
-      ...new Set([
-        ...state.portfolios.map(p => p.name),
-        ...state.domains.map(d => d.portfolio || 'Unassigned')
-      ])
-    ].sort();
-
-    sel.innerHTML =
-      '<option value="all">All portfolios</option>' +
-      names.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
-
-    sel.value = names.includes(value) ? value : 'all';
-
-    $('portfolioOptions').innerHTML =
-      names.map(n => `<option value="${esc(n)}"></option>`).join('');
-  }
-
-  function goPage(page) {
-    state.page = page;
-
-    document.querySelectorAll('.page').forEach(el =>
-      el.classList.toggle('active', el.id === `page-${page}`)
-    );
-
-    document.querySelectorAll('.nav-item[data-page]').forEach(el =>
-      el.classList.toggle('active', el.dataset.page === page)
-    );
-
-    const active = document.querySelector(`.nav-item[data-page="${page}"]`);
-
-    $('pageCrumb').textContent = active
-      ? active.textContent.trim().replace(/\d+$/, '').trim()
-      : 'Overview';
-
-    if (page === 'domains') renderDomains();
-    if (page === 'alerts') renderAlerts();
-    if (page === 'calendar') renderCalendar();
-    if (page === 'portfolios') renderPortfolios();
-
-    $('sidebar').classList.remove('open');
-    $('mobileScrim').classList.remove('show');
-
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-
-  function renderCalendar() {
-    const date = state.calendarDate;
-    const year = date.getFullYear();
-    const month = date.getMonth();
-
-    $('calendarMonth').textContent = date.toLocaleDateString(undefined, {
-      month: 'long',
-      year: 'numeric'
-    });
-
-    const first = new Date(year, month, 1);
-    const start = new Date(year, month, 1 - first.getDay());
-
-    const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-    let html = weekdays.map(d =>
-      `<div class="calendar-weekday">${d}</div>`
-    ).join('');
-
-    const today = dateOnly(new Date());
-
-    for (let i = 0; i < 42; i++) {
-      const day = new Date(start);
-      day.setDate(start.getDate() + i);
-
-      const key = dateOnly(day);
-      const events = state.domains.filter(d => d.expiration_date === key);
-
-      html += `<div class="calendar-day ${
-        day.getMonth() !== month ? 'outside' : ''
-      } ${key === today ? 'today' : ''}">
-        <div class="calendar-day-number">${day.getDate()}</div>
-        ${events.slice(0, 3).map(d =>
-          `<button class="calendar-domain ${statusFor(d)}"
-            title="${esc(d.domain_name)}"
-            data-calendar-domain="${esc(d.domain_name)}">${esc(d.domain_name)}</button>`
-        ).join('')}
-        ${events.length > 3 ? `<div class="muted">+${events.length - 3} more</div>` : ''}
-      </div>`;
-    }
-
-    $('calendarGrid').innerHTML = html;
-  }
-
-  function parseRdap(data, domain) {
-    const events = data.events || [];
-
-    const findDate = action =>
-      dateOnly(events.find(e => e.eventAction === action)?.eventDate);
-
-    const registrarEntity = (data.entities || []).find(e =>
-      (e.roles || []).includes('registrar')
-    );
-
-    let registrar = '';
-
-    if (registrarEntity?.vcardArray?.[1]) {
-      const v = registrarEntity.vcardArray[1];
-
-      registrar =
-        v.find(row => row[0] === 'fn')?.[3] ||
-        v.find(row => row[0] === 'org')?.[3] ||
-        '';
-    }
-
-    return {
-      domain,
-      registration_date: findDate('registration'),
-      expiration_date: findDate('expiration'),
-      registrar_name: registrar || null,
-      nameservers: (data.nameservers || [])
-        .map(ns => ns.ldhName)
-        .filter(Boolean),
-      status_codes: data.status || [],
-      data_source: data.port43 || data.rdapConformance?.join(', ') || 'RDAP',
-      raw: data
-    };
-  }
-
-  async function rdapLookup(raw) {
-    const domain = validDomain(raw);
-
-    if (!domain) {
-      throw new Error('Enter a valid domain name such as example.com.');
-    }
-
-    const response = await fetch(
-      `https://rdap.org/domain/${encodeURIComponent(domain)}`,
-      {
-        headers: {
-          Accept: 'application/rdap+json, application/json'
-        },
-        cache: 'no-store'
-      }
-    );
-
-    if (response.status === 404) {
-      throw new Error(
-        'No registration record was found. This does not prove the domain is available.'
-      );
-    }
-
-    if (!response.ok) {
-      throw new Error(
-        `RDAP lookup failed (${response.status}). Try again later or check whether this TLD supports RDAP.`
-      );
-    }
-
-    const data = await response.json();
-    return parseRdap(data, domain);
-  }
-
-  function renderFinderResult(result, target = 'finderResult') {
-    const days = daysRemaining(result.expiration_date);
-
-    const box = $(target);
-
-    const saveButtonId = target === 'overviewScanResult'
-      ? 'saveOverviewScanDomain'
-      : 'saveLookupDomain';
-
-    box.classList.remove('hidden');
-
-    box.innerHTML = `
+  try {
+    const result = await rdapLookup($('overviewScanInput').value);
+    state.lookup = result;
+    renderFinderResult(result, 'overviewScanResult');
+  } catch (err) {
+    resultBox.classList.remove('hidden');
+    resultBox.innerHTML = `
       <div class="result-banner">
         <div>
-          <h2>${esc(result.domain)}</h2>
-          <p>Lookup completed · ${esc(result.data_source || 'RDAP')} · ${new Date().toLocaleString()}</p>
+          <h2>Scan unavailable</h2>
+          <p>${esc(err.message)}</p>
         </div>
-        ${badge(result.expiration_date
-          ? (days < 0 ? 'expired' : days <= 7 ? 'critical' : days <= 30 ? 'warning' : 'healthy')
-          : 'unknown')}
-      </div>
+        <span class="badge neutral">No verified result</span>
+      </div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Scan Domain';
+  }
+}
+  function openAddWithLookup(result=null) { if(!client || !state.user) return toast('Connect Supabase and sign in to save domains.', 'error'); state.addLookup=result; $('newDomainName').value=result?.domain||$('finderInput').value||''; $('newDomainPortfolio').value='Unassigned'; $('newDomainNotes').value=''; $('precheckSummary').classList.toggle('hidden',!result); $('precheckStatus').textContent=result?'Registration data loaded':'Optional, recommended'; if(result) $('precheckSummary').innerHTML=`<b>${esc(result.domain)}</b><br>Expiration: ${prettyDate(result.expiration_date)}<br>Registrar: ${esc(result.registrar_name||'Not disclosed')}<br><span>Only provider-returned data will be saved.</span>`; $('domainDialog').showModal(); }
+  async function precheckDomain() { try { $('precheckBtn').disabled=true;$('precheckStatus').textContent='Checking RDAP…'; const result=await rdapLookup($('newDomainName').value);state.addLookup=result;$('precheckSummary').classList.remove('hidden');$('precheckSummary').innerHTML=`<b>${esc(result.domain)}</b><br>Registration: ${prettyDate(result.registration_date)}<br>Expiration: ${prettyDate(result.expiration_date)}<br>Registrar: ${esc(result.registrar_name||'Not disclosed')}<br>Nameservers: ${esc(result.nameservers.join(', ')||'Not disclosed')}`;$('precheckStatus').textContent='Registration data retrieved';toast('RDAP lookup completed. Review the result before saving.','success'); } catch(err) { state.addLookup=null;$('precheckStatus').textContent='Lookup unavailable';toast(err.message,'error'); } finally {$('precheckBtn').disabled=false;} }
+  async function saveDomain(e) { e.preventDefault(); const name=validDomain($('newDomainName').value);if(!name)return toast('Enter a valid domain name.','error');if(state.domains.some(d=>d.domain_name.toLowerCase()===name))return toast('This domain is already in your portfolio.','error');const b=$('saveDomainBtn');b.disabled=true;try{let lookup=state.addLookup;if(!lookup || lookup.domain!==name){try{lookup=await rdapLookup(name);}catch{lookup=null;}}const row={owner_id:state.user.id,domain_name:name,tld:name.split('.').pop(),registrar_name:lookup?.registrar_name||null,registration_date:lookup?.registration_date||null,expiration_date:lookup?.expiration_date||null,nameservers:lookup?.nameservers||[],domain_status:(lookup?.status_codes||[]).join(', ')||'unknown',portfolio:$('newDomainPortfolio').value.trim()||'Unassigned',notes:$('newDomainNotes').value.trim()||null,data_source:lookup?.data_source||null,last_checked_at:lookup?new Date().toISOString():null,next_check_at:new Date().toISOString()};const {data,error}=await client.from('domains').insert(row).select().single();if(error)throw error;state.domains.push(data);if(row.portfolio!=='Unassigned'&&!state.portfolios.some(p=>p.name===row.portfolio)){const {data:pdata}=await client.from('portfolios').insert({owner_id:state.user.id,name:row.portfolio}).select().maybeSingle();if(pdata)state.portfolios.push(pdata);} $('domainDialog').close();state.addLookup=null;renderAll();toast(lookup?'Domain saved with available RDAP data.':'Domain saved; registration data is unknown until a successful check.','success');}catch(err){toast(err.message||'Could not save domain.','error');}finally{b.disabled=false;} }
+  async function deleteDomain(id,name) { if(!confirm(`Remove ${name} from your monitoring portfolio?`))return;const {error}=await client.from('domains').delete().eq('id',id);if(error)return toast(error.message,'error');state.domains=state.domains.filter(d=>d.id!==id);state.alerts=state.alerts.filter(a=>a.domain_id!==id);renderAll();toast(`${name} removed.`,'success'); }
+  function updateBulkActions(visibleDomains = state.domains) {
+  const selectedCount = state.selectedDomainIds.size;
+  const toolbar = $('bulkActions');
 
-      <div class="result-grid">
-        <div class="result-field">
-          <span>Registration date</span>
-          <strong>${prettyDate(result.registration_date)}</strong>
-        </div>
-        <div class="result-field">
-          <span>Expiration date</span>
-          <strong>${prettyDate(result.expiration_date)}</strong>
-        </div>
-        <div class="result-field">
-          <span>Time remaining</span>
-          <strong>${result.expiration_date
-            ? esc(days < 0
-              ? `${Math.abs(days)} days past expiry`
-              : days === 0
-                ? 'Expires today'
-                : `${days} days`)
-            : 'Unknown'}</strong>
-        </div>
-        <div class="result-field">
-          <span>Registrar</span>
-          <strong>${esc(result.registrar_name || 'Not disclosed')}</strong>
-        </div>
-        <div class="result-field">
-          <span>Domain status</span>
-          <strong>${esc((result.status_codes || []).join(', ') || 'Not disclosed')}</strong>
-        </div>
-        <div class="result-field">
-          <span>Nameservers</span>
-          <strong>${esc((result.nameservers || []).join(', ') || 'Not disclosed')}</strong>
-        </div>
-      </div>
+  if (!toolbar) return;
 
-      <div class="result-detail">
-        <h3>Registration record</h3>
-        <code>${esc(JSON.stringify({
-          domain: result.domain,
-          registrationDate: result.registration_date,
-          expirationDate: result.expiration_date,
-          registrar: result.registrar_name,
-          status: result.status_codes,
-          nameservers: result.nameservers
-        }, null, 2))}</code>
+  toolbar.classList.toggle('hidden', selectedCount === 0);
 
-        <div style="margin-top:14px">
-          <button id="${saveButtonId}" class="btn primary" type="button">
-            ＋ Add to my domains
-          </button>
-        </div>
-      </div>
-    `;
+  $('selectedDomainCount').textContent = selectedCount;
 
-    $(saveButtonId).addEventListener('click', () =>
-      openAddWithLookup(result)
-    );
+  const selectAll = $('selectAllDomains');
+
+  if (selectAll) {
+    const visibleIds = visibleDomains.map(d => d.id);
+    const selectedVisible = visibleIds.filter(id =>
+      state.selectedDomainIds.has(id)
+    ).length;
+
+    selectAll.checked =
+      visibleIds.length > 0 && selectedVisible === visibleIds.length;
+
+    selectAll.indeterminate =
+      selectedVisible > 0 && selectedVisible < visibleIds.length;
+  }
+}
+
+async function refreshSelectedDomains() {
+  if (!state.user || !client) {
+    return toast('Please sign in first.', 'error');
   }
 
-  async function handleOverviewScan(e) {
-    e.preventDefault();
+  const selected = state.domains.filter(d =>
+    state.selectedDomainIds.has(d.id)
+  );
 
-    const btn = $('overviewScanBtn');
-    const resultBox = $('overviewScanResult');
-
-    btn.disabled = true;
-    btn.textContent = 'Scanning…';
-    resultBox.classList.add('hidden');
-
-    try {
-      const result = await rdapLookup($('overviewScanInput').value);
-      state.lookup = result;
-      renderFinderResult(result, 'overviewScanResult');
-
-    } catch (err) {
-      resultBox.classList.remove('hidden');
-
-      resultBox.innerHTML = `
-        <div class="result-banner">
-          <div>
-            <h2>Scan unavailable</h2>
-            <p>${esc(err.message)}</p>
-          </div>
-          <span class="badge neutral">No verified result</span>
-        </div>`;
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Scan Domain';
-    }
+  if (!selected.length) {
+    return toast('Select domains to refresh.', 'error');
   }
 
-  function openAddWithLookup(result = null) {
-    if (!client || !state.user) {
-      return toast('Connect Supabase and sign in to save domains.', 'error');
-    }
+  const button = $('refreshSelectedDomains');
+  button.disabled = true;
 
-    state.addLookup = result;
+  let updated = 0;
+  let failed = 0;
 
-    $('newDomainName').value =
-      result?.domain || $('finderInput').value || '';
+  try {
+    for (let i = 0; i < selected.length; i += 10) {
+      const batch = selected.slice(i, i + 10);
 
-    $('newDomainPortfolio').value = 'Unassigned';
-    $('newDomainNotes').value = '';
+      button.textContent =
+        `Checking ${Math.min(i + 10, selected.length)} of ${selected.length}...`;
 
-    $('precheckSummary').classList.toggle('hidden', !result);
-
-    $('precheckStatus').textContent =
-      result ? 'Registration data loaded' : 'Optional, recommended';
-
-    if (result) {
-      $('precheckSummary').innerHTML = `
-        <b>${esc(result.domain)}</b><br>
-        Expiration: ${prettyDate(result.expiration_date)}<br>
-        Registrar: ${esc(result.registrar_name || 'Not disclosed')}<br>
-        <span>Only provider-returned data will be saved.</span>`;
-    }
-
-    $('domainDialog').showModal();
-  }
-
-  async function precheckDomain() {
-    try {
-      $('precheckBtn').disabled = true;
-      $('precheckStatus').textContent = 'Checking RDAP…';
-
-      const result = await rdapLookup($('newDomainName').value);
-
-      state.addLookup = result;
-
-      $('precheckSummary').classList.remove('hidden');
-
-      $('precheckSummary').innerHTML = `
-        <b>${esc(result.domain)}</b><br>
-        Registration: ${prettyDate(result.registration_date)}<br>
-        Expiration: ${prettyDate(result.expiration_date)}<br>
-        Registrar: ${esc(result.registrar_name || 'Not disclosed')}<br>
-        Nameservers: ${esc(result.nameservers.join(', ') || 'Not disclosed')}`;
-
-      $('precheckStatus').textContent = 'Registration data retrieved';
-
-      toast('RDAP lookup completed. Review the result before saving.', 'success');
-
-    } catch (err) {
-      state.addLookup = null;
-      $('precheckStatus').textContent = 'Lookup unavailable';
-      toast(err.message, 'error');
-
-    } finally {
-      $('precheckBtn').disabled = false;
-    }
-  }
-
-  async function saveDomain(e) {
-    e.preventDefault();
-
-    const name = validDomain($('newDomainName').value);
-
-    if (!name) return toast('Enter a valid domain name.', 'error');
-
-    if (state.domains.some(d => d.domain_name.toLowerCase() === name)) {
-      return toast('This domain is already in your portfolio.', 'error');
-    }
-
-    const b = $('saveDomainBtn');
-    b.disabled = true;
-
-    try {
-      let lookup = state.addLookup;
-
-      if (!lookup || lookup.domain !== name) {
-        try {
-          lookup = await rdapLookup(name);
-        } catch {
-          lookup = null;
+      const { data, error } = await client.functions.invoke(
+        'import-domains',
+        {
+          body: {
+            domains: batch.map(d => d.domain_name)
+          }
         }
-      }
-
-      const row = {
-        owner_id: state.user.id,
-        domain_name: name,
-        tld: name.split('.').pop(),
-        registrar_name: lookup?.registrar_name || null,
-        registration_date: lookup?.registration_date || null,
-        expiration_date: lookup?.expiration_date || null,
-        nameservers: lookup?.nameservers || [],
-        domain_status: (lookup?.status_codes || []).join(', ') || 'unknown',
-        portfolio: $('newDomainPortfolio').value.trim() || 'Unassigned',
-        notes: $('newDomainNotes').value.trim() || null,
-        data_source: lookup?.data_source || null,
-        last_checked_at: lookup ? new Date().toISOString() : null,
-        next_check_at: new Date().toISOString()
-      };
-
-      const { data, error } = await client
-        .from('domains')
-        .insert(row)
-        .select()
-        .single();
+      );
 
       if (error) throw error;
 
-      state.domains.push(data);
-
-      if (
-        row.portfolio !== 'Unassigned' &&
-        !state.portfolios.some(p => p.name === row.portfolio)
-      ) {
-        const { data: pdata } = await client
-          .from('portfolios')
-          .insert({
-            owner_id: state.user.id,
-            name: row.portfolio
-          })
-          .select()
-          .maybeSingle();
-
-        if (pdata) state.portfolios.push(pdata);
+      if (!data || !Array.isArray(data.results)) {
+        throw new Error('Invalid response from domain lookup function.');
       }
 
-      $('domainDialog').close();
-      state.addLookup = null;
+      for (const domain of batch) {
+        const result = data.results.find(
+          r => r.domain?.toLowerCase() === domain.domain_name.toLowerCase()
+        );
 
-      renderAll();
+        if (!result?.ok || !result.rdap) {
+          failed++;
+          continue;
+        }
 
-      toast(
-        lookup
-          ? 'Domain saved with available RDAP data.'
-          : 'Domain saved; registration data is unknown until a successful check.',
-        'success'
-      );
+        try {
+          const lookup = parseRdap(result.rdap, domain.domain_name);
 
-    } catch (err) {
-      toast(err.message || 'Could not save domain.', 'error');
+          const { data: saved, error: updateError } = await client
+            .from('domains')
+            .update({
+              registrar_name: lookup.registrar_name || null,
+              registration_date: lookup.registration_date || null,
+              expiration_date: lookup.expiration_date || null,
+              nameservers: lookup.nameservers || [],
+              domain_status: (lookup.status_codes || []).join(', ') || 'unknown',
+              data_source: lookup.data_source || 'RDAP',
+              last_checked_at: new Date().toISOString(),
+              next_check_at: new Date().toISOString()
+            })
+            .eq('id', domain.id)
+            .eq('owner_id', state.user.id)
+            .select()
+            .single();
 
-    } finally {
-      b.disabled = false;
+          if (updateError) throw updateError;
+
+          state.domains = state.domains.map(d =>
+            d.id === domain.id ? saved : d
+          );
+
+          updated++;
+
+        } catch (err) {
+          console.error(`Refresh failed for ${domain.domain_name}:`, err);
+          failed++;
+        }
+      }
     }
-  }
 
-  async function deleteDomain(id, name) {
-    if (!confirm(`Remove ${name} from your monitoring portfolio?`)) return;
-
-    const { error } = await client.from('domains').delete().eq('id', id);
-
-    if (error) return toast(error.message, 'error');
-
-    state.domains = state.domains.filter(d => d.id !== id);
-    state.alerts = state.alerts.filter(a => a.domain_id !== id);
-
+    state.selectedDomainIds.clear();
     renderAll();
-    toast(`${name} removed.`, 'success');
+
+    toast(
+      `Refresh complete: ${updated} updated, ${failed} unavailable.`,
+      updated ? 'success' : 'error'
+    );
+
+  } catch (err) {
+    console.error('Bulk refresh error:', err);
+    toast(err.message || 'Could not refresh selected domains.', 'error');
+
+  } finally {
+    button.disabled = false;
+    button.textContent = '↻ Refresh selected';
+  }
+}
+
+async function deleteSelectedDomains() {
+  if (!state.user || !client) {
+    return toast('Please sign in first.', 'error');
   }
 
-  // =====================================
-  // IMPORT DOMAINS
-  // =====================================
+  const ids = [...state.selectedDomainIds];
 
-async function importDomains(e) {
+  if (!ids.length) {
+    return toast('Select domains to delete.', 'error');
+  }
+
+  if (!confirm(
+    `Are you sure you want to delete ${ids.length} selected domain(s)? This cannot be undone.`
+  )) {
+    return;
+  }
+
+  const { error } = await client
+    .from('domains')
+    .delete()
+    .in('id', ids)
+    .eq('owner_id', state.user.id);
+
+  if (error) {
+    return toast(error.message, 'error');
+  }
+
+  state.domains = state.domains.filter(d => !ids.includes(d.id));
+  state.alerts = state.alerts.filter(a => !ids.includes(a.domain_id));
+  state.selectedDomainIds.clear();
+
+  renderAll();
+
+  toast(`${ids.length} domain(s) deleted.`, 'success');
+}
+ async function importDomains(e) {
   e.preventDefault();
 
   const raw = $('importText').value.trim();
@@ -1291,315 +544,122 @@ async function importDomains(e) {
     }
   }
 }
-  // =====================================
-  // CSV FILE UPLOAD AND DRAG & DROP
-  // =====================================
+// CSV FILE UPLOAD AND DRAG & DROP
+// =====================================
 
-  async function loadCsvFile(file) {
-    if (!file) return;
+async function loadCsvFile(file) {
+  if (!file) return;
 
-    if (!file.name.toLowerCase().endsWith('.csv')) {
-      toast('Please select a CSV file.', 'error');
+  if (!file.name.toLowerCase().endsWith('.csv')) {
+    toast('Please select a CSV file.', 'error');
+    return;
+  }
+
+  try {
+    const text = await file.text();
+
+    if (!text.trim()) {
+      toast('The selected CSV file is empty.', 'error');
       return;
     }
 
-    try {
-      const text = await file.text();
+    $('importText').value = text;
 
-      if (!text.trim()) {
-        toast('The selected CSV file is empty.', 'error');
-        return;
-      }
+    $('csvFileName').textContent = '✓ Selected: ' + file.name;
+    $('csvFileName').classList.remove('hidden');
 
-      $('importText').value = text;
+    toast('CSV file loaded. Review it and click Import domains.', 'success');
 
-      $('csvFileName').textContent = '✓ Selected: ' + file.name;
-      $('csvFileName').classList.remove('hidden');
-
-      toast('CSV file loaded. Review it and click Import domains.', 'success');
-
-    } catch (error) {
-      toast('Could not read the CSV file.', 'error');
-    }
+  } catch (error) {
+    toast('Could not read the CSV file.', 'error');
   }
+}
 
-  function bindCsvUpload() {
-    const dropZone = $('csvDropZone');
-    const fileInput = $('csvFileInput');
-    const browseBtn = $('browseCsvBtn');
+function bindCsvUpload() {
+  const dropZone = $('csvDropZone');
+  const fileInput = $('csvFileInput');
+  const browseBtn = $('browseCsvBtn');
 
-    if (!dropZone || !fileInput || !browseBtn) return;
+  if (!dropZone || !fileInput || !browseBtn) return;
 
-    browseBtn.addEventListener('click', () => {
-      fileInput.click();
-    });
+  browseBtn.addEventListener('click', () => {
+    fileInput.click();
+  });
 
-    fileInput.addEventListener('change', async () => {
-      const file = fileInput.files && fileInput.files[0];
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files[0];
 
-      if (file) {
-        await loadCsvFile(file);
-      }
+    if (file) {
+      await loadCsvFile(file);
+    }
 
-      fileInput.value = '';
-    });
+    fileInput.value = '';
+  });
 
-    dropZone.addEventListener('dragover', (e) => {
-      e.preventDefault();
-      dropZone.classList.add('drag-over');
-    });
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
 
-    dropZone.addEventListener('dragleave', (e) => {
-      if (!dropZone.contains(e.relatedTarget)) {
-        dropZone.classList.remove('drag-over');
-      }
-    });
-
-    dropZone.addEventListener('drop', async (e) => {
-      e.preventDefault();
+  dropZone.addEventListener('dragleave', (e) => {
+    if (!dropZone.contains(e.relatedTarget)) {
       dropZone.classList.remove('drag-over');
+    }
+  });
 
-      const file = e.dataTransfer && e.dataTransfer.files[0];
-
-      if (file) {
-        await loadCsvFile(file);
-      }
-    });
-  }
-
-  function exportCsv() {
-    const headers = [
-      'domain_name',
-      'registrar_name',
-      'registration_date',
-      'expiration_date',
-      'portfolio',
-      'domain_status',
-      'last_checked_at',
-      'notes'
-    ];
-
-    const csv = [
-      headers.join(','),
-      ...state.domains.map(d =>
-        headers.map(h =>
-          `"${String(d[h] ?? '').replace(/"/g, '""')}"`
-        ).join(',')
-      )
-    ].join('\r\n');
-
-    const blob = new Blob([csv], {
-      type: 'text/csv;charset=utf-8;'
-    });
-
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-
-    a.href = url;
-    a.download = 'domainguard-domains.csv';
-    a.click();
-
-    URL.revokeObjectURL(url);
-    toast('CSV export created.', 'success');
-  }
-
-  async function savePortfolio(e) {
+  dropZone.addEventListener('drop', async (e) => {
     e.preventDefault();
+    dropZone.classList.remove('drag-over');
 
-    const name = $('portfolioName').value.trim();
-    if (!name) return;
+    const file = e.dataTransfer.files[0];
 
-    if (state.portfolios.some(p =>
-      p.name.toLowerCase() === name.toLowerCase()
-    )) {
-      return toast('That portfolio already exists.', 'error');
+    if (file) {
+      await loadCsvFile(file);
     }
+  });
+} 
+  function exportCsv() { const headers=['domain_name','registrar_name','registration_date','expiration_date','portfolio','domain_status','last_checked_at','notes'];const csv=[headers.join(','),...state.domains.map(d=>headers.map(h=>`"${String(d[h]??'').replace(/"/g,'""')}"`).join(','))].join('\r\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='domainguard-domains.csv';a.click();URL.revokeObjectURL(url);toast('CSV export created.','success'); }
+  async function savePortfolio(e) { e.preventDefault();const name=$('portfolioName').value.trim();if(!name)return;if(state.portfolios.some(p=>p.name.toLowerCase()===name.toLowerCase()))return toast('That portfolio already exists.','error');const {data,error}=await client.from('portfolios').insert({owner_id:state.user.id,name}).select().single();if(error)return toast(error.message,'error');state.portfolios.push(data);$('portfolioDialog').close();$('portfolioName').value='';renderAll();toast('Portfolio created. Assign domains to it when adding or editing a domain.','success'); }
+  async function deletePortfolio(id,name) { if(!confirm(`Delete portfolio “${name}”? Domains assigned to it will remain in your account.`))return;const {error}=await client.from('portfolios').delete().eq('id',id);if(error)return toast(error.message,'error');state.portfolios=state.portfolios.filter(p=>p.id!==id);renderAll();toast('Portfolio deleted.','success'); }
+  async function markAlertsRead() { const unread=state.alerts.filter(a=>!a.is_read);if(!unread.length)return toast('All alerts are already read.');const {error}=await client.from('alerts').update({is_read:true}).eq('owner_id',state.user.id).eq('is_read',false);if(error)return toast(error.message,'error');state.alerts=state.alerts.map(a=>({...a,is_read:true}));renderAll();toast('All alerts marked as read.','success'); }
+  async function saveTelegram(e) { e.preventDefault();const ok=await savePrefs({telegram_chat_id:$('telegramChatId').value.trim()||null,telegram_enabled:$('telegramEnabled').checked});if(ok)fillPrefs(); }
+  async function saveEmail(e) { e.preventDefault();const email=$('notifyEmail').value.trim();if($('emailEnabled').checked&&!email)return toast('Enter a notification email address.','error');const ok=await savePrefs({email_recipient:email||null,email_enabled:$('emailEnabled').checked});if(ok)fillPrefs(); }
+  async function saveThresholds() { const days=[...document.querySelectorAll('.threshold-check:checked')].map(el=>Number(el.value)).sort((a,b)=>b-a);if(!days.length)return toast('Select at least one reminder threshold.','error');const ok=await savePrefs({notify_days_before:days});if(ok)toast('Reminder schedule saved.','success'); }
+  async function testNotification(channel) { if(!client || !state.user)return toast('Sign in and connect Supabase first.','error');const prefs=state.prefs||{};if(channel==='email'&&(!prefs.email_recipient||!prefs.email_enabled))return toast('Enable email alerts and save a recipient first.','error');if(channel==='telegram'&&(!prefs.telegram_chat_id||!prefs.telegram_enabled))return toast('Enable Telegram alerts and save a chat ID first.','error');const btn=$(channel==='email'?'emailTestBtn':'telegramTestBtn');btn.disabled=true;const old=btn.textContent;btn.textContent='Sending…';try{const {data,error}=await client.functions.invoke('test-notifications',{body:{channel}});if(error)throw error;if(data?.error)throw new Error(data.error);toast(data?.message||'Test notification accepted by provider.','success');}catch(err){toast(`Test failed: ${err.message}. Check Edge Function deployment and server secrets.`, 'error');}finally{btn.disabled=false;btn.textContent=old;} }
+async function handleFinder(e) {
+  e.preventDefault();
 
-    const { data, error } = await client
-      .from('portfolios')
-      .insert({
-        owner_id: state.user.id,
-        name
-      })
-      .select()
-      .single();
+  const btn = $('finderSubmit');
+  const resultBox = $('finderResult');
 
-    if (error) return toast(error.message, 'error');
+  btn.disabled = true;
+  btn.textContent = 'Looking up...';
+  resultBox.classList.add('hidden');
 
-    state.portfolios.push(data);
+  try {
+    const result = await rdapLookup($('finderInput').value);
 
-    $('portfolioDialog').close();
-    $('portfolioName').value = '';
+    state.lookup = result;
+    renderFinderResult(result, 'finderResult');
 
-    renderAll();
-    toast('Portfolio created. Assign domains to it when adding or editing a domain.', 'success');
-  }
-
-  async function deletePortfolio(id, name) {
-    if (!confirm(
-      `Delete portfolio “${name}”? Domains assigned to it will remain in your account.`
-    )) return;
-
-    const { error } = await client.from('portfolios').delete().eq('id', id);
-
-    if (error) return toast(error.message, 'error');
-
-    state.portfolios = state.portfolios.filter(p => p.id !== id);
-
-    renderAll();
-    toast('Portfolio deleted.', 'success');
-  }
-
-  async function markAlertsRead() {
-    const unread = state.alerts.filter(a => !a.is_read);
-
-    if (!unread.length) {
-      return toast('All alerts are already read.');
-    }
-
-    const { error } = await client
-      .from('alerts')
-      .update({ is_read: true })
-      .eq('owner_id', state.user.id)
-      .eq('is_read', false);
-
-    if (error) return toast(error.message, 'error');
-
-    state.alerts = state.alerts.map(a => ({ ...a, is_read: true }));
-
-    renderAll();
-    toast('All alerts marked as read.', 'success');
-  }
-
-  async function saveTelegram(e) {
-    e.preventDefault();
-
-    const ok = await savePrefs({
-      telegram_chat_id: $('telegramChatId').value.trim() || null,
-      telegram_enabled: $('telegramEnabled').checked
-    });
-
-    if (ok) fillPrefs();
-  }
-
-  async function saveEmail(e) {
-    e.preventDefault();
-
-    const email = $('notifyEmail').value.trim();
-
-    if ($('emailEnabled').checked && !email) {
-      return toast('Enter a notification email address.', 'error');
-    }
-
-    const ok = await savePrefs({
-      email_recipient: email || null,
-      email_enabled: $('emailEnabled').checked
-    });
-
-    if (ok) fillPrefs();
-  }
-
-  async function saveThresholds() {
-    const days = [
-      ...document.querySelectorAll('.threshold-check:checked')
-    ].map(el => Number(el.value)).sort((a, b) => b - a);
-
-    if (!days.length) {
-      return toast('Select at least one reminder threshold.', 'error');
-    }
-
-    const ok = await savePrefs({ notify_days_before: days });
-
-    if (ok) toast('Reminder schedule saved.', 'success');
-  }
-
-  async function testNotification(channel) {
-    if (!client || !state.user) {
-      return toast('Sign in and connect Supabase first.', 'error');
-    }
-
-    const prefs = state.prefs || {};
-
-    if (channel === 'email' &&
-        (!prefs.email_recipient || !prefs.email_enabled)) {
-      return toast('Enable email alerts and save a recipient first.', 'error');
-    }
-
-    if (channel === 'telegram' &&
-        (!prefs.telegram_chat_id || !prefs.telegram_enabled)) {
-      return toast('Enable Telegram alerts and save a chat ID first.', 'error');
-    }
-
-    const btn = $(channel === 'email' ? 'emailTestBtn' : 'telegramTestBtn');
-
-    btn.disabled = true;
-
-    const old = btn.textContent;
-    btn.textContent = 'Sending…';
-
-    try {
-      const { data, error } = await client.functions.invoke(
-        'test-notifications',
-        { body: { channel } }
-      );
-
-      if (error) throw error;
-      if (data?.error) throw new Error(data.error);
-
-      toast(
-        data?.message || 'Test notification accepted by provider.',
-        'success'
-      );
-
-    } catch (err) {
-      toast(
-        `Test failed: ${err.message}. Check Edge Function deployment and server secrets.`,
-        'error'
-      );
-
-    } finally {
-      btn.disabled = false;
-      btn.textContent = old;
-    }
-  }
-
-  async function handleFinder(e) {
-    e.preventDefault();
-
-    const btn = $('finderSubmit');
-    const resultBox = $('finderResult');
-
-    btn.disabled = true;
-    btn.textContent = 'Looking up...';
-    resultBox.classList.add('hidden');
-
-    try {
-      const result = await rdapLookup($('finderInput').value);
-
-      state.lookup = result;
-      renderFinderResult(result, 'finderResult');
-
-    } catch (err) {
-      resultBox.classList.remove('hidden');
-
-      resultBox.innerHTML = `
-        <div class="result-banner">
-          <div>
-            <h2>Lookup unavailable</h2>
-            <p>${esc(err.message)}</p>
-          </div>
-          <span class="badge neutral">No verified result</span>
+  } catch (err) {
+    resultBox.classList.remove('hidden');
+    resultBox.innerHTML = `
+      <div class="result-banner">
+        <div>
+          <h2>Lookup unavailable</h2>
+          <p>${esc(err.message)}</p>
         </div>
-      `;
-
-    } finally {
-      btn.disabled = false;
-      btn.textContent = 'Look up domain →';
-    }
+        <span class="badge neutral">No verified result</span>
+      </div>
+    `;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Look up domain →';
   }
+}
 
-  function bindEvents() {
-    $('authForm').addEventListener('submit', handleAuthSubmit);
+function bindEvents() {  $('authForm').addEventListener('submit', handleAuthSubmit);
 
     $('authModeToggle').addEventListener('click', () =>
       setAuthMode(state.authMode === 'login' ? 'signup' : 'login')
@@ -1645,6 +705,7 @@ async function importDomains(e) {
     $('exportBtn').addEventListener('click', exportCsv);
 
     $('finderForm').addEventListener('submit', handleFinder);
+    $('overviewScanForm')?.addEventListener('submit', handleOverviewScan);
 
     $('telegramForm').addEventListener('submit', saveTelegram);
     $('emailForm').addEventListener('submit', saveEmail);
@@ -1670,6 +731,54 @@ async function importDomains(e) {
 
       await loadWorkspace();
       toast('Workspace refreshed.', 'success');
+    });
+
+    // Bulk domain actions
+    $('refreshSelectedDomains')?.addEventListener(
+      'click',
+      refreshSelectedDomains
+    );
+
+    $('deleteSelectedDomains')?.addEventListener(
+      'click',
+      deleteSelectedDomains
+    );
+
+    $('clearDomainSelection')?.addEventListener('click', () => {
+      state.selectedDomainIds.clear();
+      renderDomains();
+      toast('Selection cleared.');
+    });
+
+    // Individual and select-all checkboxes
+    document.body.addEventListener('change', e => {
+      const checkbox = e.target.closest('[data-select-domain]');
+      const selectAll = e.target.closest('#selectAllDomains');
+
+      if (checkbox) {
+        const id = String(checkbox.dataset.selectDomain);
+
+        if (checkbox.checked) {
+          state.selectedDomainIds.add(id);
+        } else {
+          state.selectedDomainIds.delete(id);
+        }
+
+        renderDomains();
+
+      } else if (selectAll) {
+        document.querySelectorAll('[data-select-domain]').forEach(item => {
+          const id = String(item.dataset.selectDomain);
+
+          if (selectAll.checked) {
+            state.selectedDomainIds.add(id);
+          } else {
+            state.selectedDomainIds.delete(id);
+          }
+        });
+
+        renderDomains();
+      }
     });
 
     $('markReadBtn').addEventListener('click', markAlertsRead);
@@ -1773,63 +882,63 @@ async function importDomains(e) {
         isHidden ? 'Hide password' : 'Show password'
       );
     });
+
+}
+
+async function init() {
+  showTheme();
+  bindEvents();
+  setAuthMode('login');
+
+  if (!configured) {
+    appView();
+    $('setupNotice').classList.remove('hidden');
+    $('lastSyncLabel').textContent = 'Backend not configured';
+    $('updatedLabel').textContent = 'Setup required';
+    toast('Website loaded. Connect Supabase to enable account and database features.');
+    return;
   }
 
-  async function init() {
-    showTheme();
-    bindEvents();
-    setAuthMode('login');
+  $('setupNotice').classList.add('hidden');
 
-    if (!configured) {
-      appView();
-      $('setupNotice').classList.remove('hidden');
-      $('lastSyncLabel').textContent = 'Backend not configured';
-      $('updatedLabel').textContent = 'Setup required';
+  try {
+    const { data, error } = await client.auth.getSession();
 
-      toast('Website loaded. Connect Supabase to enable account and database features.');
-      return;
+    if (error) throw error;
+
+    state.session = data.session;
+    state.user = data.session?.user || null;
+
+    if (state.user) {
+      await afterSignIn();
+    } else {
+      authView();
     }
 
-    $('setupNotice').classList.add('hidden');
-
-    try {
-      const { data, error } = await client.auth.getSession();
-
-      if (error) throw error;
-
-      state.session = data.session;
-      state.user = data.session?.user || null;
+    client.auth.onAuthStateChange((_event, session) => {
+      state.session = session;
+      state.user = session?.user || null;
 
       if (state.user) {
-        await afterSignIn();
+        appView();
+        setTimeout(() => afterSignIn(), 0);
       } else {
+        state.domains = [];
+        state.alerts = [];
         authView();
       }
+    });
 
-      client.auth.onAuthStateChange((_event, session) => {
-        state.session = session;
-        state.user = session?.user || null;
-
-        if (state.user) {
-          appView();
-          setTimeout(() => afterSignIn(), 0);
-        } else {
-          state.domains = [];
-          state.alerts = [];
-          authView();
-        }
-      });
-
-    } catch (err) {
-      authView();
-      toast(`Could not initialize authentication: ${err.message}`, 'error');
-    }
+  } catch (err) {
+    authView();
+    toast(`Could not initialize authentication: ${err.message}`, 'error');
   }
+}
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
 
 })();
