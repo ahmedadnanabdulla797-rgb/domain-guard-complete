@@ -1160,7 +1160,10 @@ async function importDomains(e) {
   }
 
   if (!newDomains.length) {
-    return toast('No new valid domains found. Existing and invalid domains were skipped.', 'error');
+    return toast(
+      'No new valid domains found. Existing and invalid domains were skipped.',
+      'error'
+    );
   }
 
   const importBtn = $('importForm').querySelector('[type="submit"]');
@@ -1172,25 +1175,56 @@ async function importDomains(e) {
 
   try {
     const rows = [];
-    const batchSize = 5;
+    const batchSize = 10;
 
     for (let i = 0; i < newDomains.length; i += batchSize) {
       const batch = newDomains.slice(i, i + batchSize);
 
-      const results = await Promise.all(
-        batch.map(async item => {
-          try {
-            const lookup = await rdapLookup(item.domain);
-            return { ...item, lookup };
-          } catch (error) {
-            console.warn(`RDAP lookup failed for ${item.domain}:`, error.message);
-            return { ...item, lookup: null };
-          }
-        })
-      );
+      let results = [];
 
-      for (const item of results) {
-        const lookup = item.lookup;
+      try {
+        const { data, error } = await client.functions.invoke(
+          'import-domains',
+          {
+            body: {
+              domains: batch.map(item => item.domain)
+            }
+          }
+        );
+
+        if (error) throw error;
+
+        if (!data || !Array.isArray(data.results)) {
+          throw new Error('Invalid response from domain lookup function.');
+        }
+
+        results = data.results;
+
+      } catch (error) {
+        console.error('Server-side RDAP lookup failed:', error);
+
+        results = batch.map(item => ({
+          domain: item.domain,
+          ok: false,
+          error: error.message || 'Server lookup failed.'
+        }));
+      }
+
+      for (const item of batch) {
+        const result = results.find(
+          r => r.domain?.toLowerCase() === item.domain.toLowerCase()
+        );
+
+        let lookup = null;
+
+        if (result?.ok && result.rdap) {
+          try {
+            lookup = parseRdap(result.rdap, item.domain);
+          } catch (error) {
+            console.warn(`Could not parse ${item.domain}:`, error);
+          }
+        }
+
         const checkedAt = lookup ? new Date().toISOString() : null;
 
         rows.push({
@@ -1212,7 +1246,7 @@ async function importDomains(e) {
 
       if (importBtn) {
         importBtn.textContent =
-          `Checking ${Math.min(i + batchSize, newDomains.length)} of ${newDomains.length}...`;
+          `Checking ${Math.min(i + batch.length, newDomains.length)} of ${newDomains.length}...`;
       }
     }
 
@@ -1247,6 +1281,7 @@ async function importDomains(e) {
     );
 
   } catch (err) {
+    console.error('Domain import failed:', err);
     toast(`Import failed: ${err.message}`, 'error');
 
   } finally {
