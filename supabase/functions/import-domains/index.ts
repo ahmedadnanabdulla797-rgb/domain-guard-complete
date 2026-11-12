@@ -21,98 +21,149 @@ const sleep = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
 async function lookupDomain(domain: string) {
-  const url = `https://rdap.org/domain/${encodeURIComponent(domain)}`;
+  const apiKey = Deno.env.get("WHOISJSON_API_KEY");
 
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const response = await fetch(url, {
-        headers: {
-          Accept: "application/rdap+json, application/json",
-          "User-Agent": "DomainGuard/1.0",
-        },
-      });
+  if (!apiKey) {
+    return {
+      domain,
+      ok: false,
+      status: 500,
+      error: "WHOISJSON_API_KEY is missing in Supabase secrets.",
+    };
+  }
 
-      if (response.status === 404) {
-        return {
-          domain,
-          ok: false,
-          status: 404,
-          error:
-            "No RDAP registration record found. This does not prove availability.",
-        };
-      }
+  try {
+    const url = new URL(
+      "https://whoisjson.com/api/v1/whois"
+    );
 
-      if (response.status === 429 || response.status >= 500) {
-        if (attempt < 2) {
-          const retryAfter = Number(
-            response.headers.get("Retry-After")
-          );
+    url.searchParams.set("domain", domain);
 
-          const delay =
-            Number.isFinite(retryAfter) && retryAfter > 0
-              ? Math.min(retryAfter * 1000, 10000)
-              : 2000 * (attempt + 1);
+    const response = await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        Authorization: `TOKEN=${apiKey}`,
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(20000),
+    });
 
-          await sleep(delay);
-          continue;
-        }
-      }
-
-      if (!response.ok) {
-        return {
-          domain,
-          ok: false,
-          status: response.status,
-          error: `RDAP lookup failed (${response.status}).`,
-        };
-      }
-
-      const rdap = await response.json();
-
-      return {
-        domain,
-        ok: true,
-        status: 200,
-        rdap: {
-          events: rdap.events || [],
-          entities: rdap.entities || [],
-          nameservers: rdap.nameservers || [],
-          status: rdap.status || [],
-          port43: rdap.port43 || null,
-          rdapConformance: rdap.rdapConformance || [],
-        },
+    if (!response.ok) {
+      const errorMessages: Record<number, string> = {
+        400: "Invalid domain or lookup request.",
+        401: "WhoisJSON API key is invalid.",
+        403: "WhoisJSON account access is restricted. Check your account.",
+        404: "No registration record was found. This does not prove availability.",
+        429: "WhoisJSON request limit reached. Try again later.",
+        500: "WhoisJSON service is temporarily unavailable.",
+        502: "WhoisJSON service is temporarily unavailable.",
+        503: "WhoisJSON service is temporarily unavailable.",
       };
-    } catch (error) {
-      if (attempt < 2) {
-        await sleep(2000 * (attempt + 1));
-        continue;
-      }
 
       return {
         domain,
         ok: false,
-        status: 0,
+        status: response.status,
         error:
-          error instanceof Error ? error.message : "Network error",
+          errorMessages[response.status] ||
+          `WhoisJSON lookup failed (${response.status}).`,
       };
     }
-  }
 
-  return {
-    domain,
-    ok: false,
-    status: 429,
-    error: "RDAP rate limit reached. Try again later.",
-  };
+    const data = await response.json();
+
+    if (data.registered === false) {
+      return {
+        domain,
+        ok: false,
+        status: 404,
+        error:
+          "No registration record was found. Confirm availability with a registrar.",
+      };
+    }
+
+    const registrarName =
+      typeof data.registrar === "string"
+        ? data.registrar
+        : data.registrar?.name || "";
+
+    const nameservers = Array.isArray(data.nameserver)
+      ? data.nameserver
+      : Array.isArray(data.nameservers)
+        ? data.nameservers
+        : [];
+
+    // Convert WhoisJSON response into the RDAP-style
+    // structure already used by DomainGuard.
+    const rdap = {
+      name: data.name || domain,
+      events: [
+        ...(data.created
+          ? [{
+              eventAction: "registration",
+              eventDate: data.created,
+            }]
+          : []),
+        ...(data.expires
+          ? [{
+              eventAction: "expiration",
+              eventDate: data.expires,
+            }]
+          : []),
+      ],
+      entities: registrarName
+        ? [{
+            roles: ["registrar"],
+            vcardArray: [
+              "vcard",
+              [["fn", {}, "text", registrarName]],
+            ],
+          }]
+        : [],
+      nameservers: nameservers.map((name: string) => ({
+        ldhName: name,
+      })),
+      status: Array.isArray(data.status) ? data.status : [],
+      port43: "WhoisJSON API",
+      rdapConformance: [],
+      providerData: data,
+    };
+
+    return {
+      domain,
+      ok: true,
+      status: 200,
+      rdap,
+      data_source: "WhoisJSON",
+    };
+
+  } catch (error) {
+    console.error("WhoisJSON lookup error:", error);
+
+    return {
+      domain,
+      ok: false,
+      status: 0,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Network error during domain lookup.",
+    };
+  }
 }
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response("ok", {
+      headers: corsHeaders,
+    });
   }
 
   if (req.method !== "POST") {
-    return jsonResponse({ error: "Method not allowed." }, 405);
+    return jsonResponse(
+      { error: "Method not allowed." },
+      405
+    );
   }
 
   try {
@@ -122,7 +173,10 @@ Deno.serve(async (req) => {
 
     if (!supabaseUrl || !supabaseAnonKey || !authorization) {
       return jsonResponse(
-        { error: "Missing Supabase configuration or authentication." },
+        {
+          error:
+            "Missing Supabase configuration or authentication.",
+        },
         401
       );
     }
@@ -132,7 +186,9 @@ Deno.serve(async (req) => {
       supabaseAnonKey,
       {
         global: {
-          headers: { Authorization: authorization },
+          headers: {
+            Authorization: authorization,
+          },
         },
       }
     );
@@ -144,7 +200,9 @@ Deno.serve(async (req) => {
 
     if (authError || !user) {
       return jsonResponse(
-        { error: "Please sign in before importing domains." },
+        {
+          error: "Please sign in before importing domains.",
+        },
         401
       );
     }
@@ -154,7 +212,9 @@ Deno.serve(async (req) => {
 
     if (!Array.isArray(domains) || domains.length === 0) {
       return jsonResponse(
-        { error: "Provide a non-empty domains array." },
+        {
+          error: "Provide a non-empty domains array.",
+        },
         400
       );
     }
@@ -172,7 +232,9 @@ Deno.serve(async (req) => {
     const results = [];
 
     for (const value of domains) {
-      const domain = String(value || "").trim().toLowerCase();
+      const domain = String(value || "")
+        .trim()
+        .toLowerCase();
 
       const valid =
         /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(
@@ -186,6 +248,7 @@ Deno.serve(async (req) => {
           status: 400,
           error: "Invalid domain name.",
         });
+
         continue;
       }
 
@@ -202,6 +265,7 @@ Deno.serve(async (req) => {
       successful: results.filter((item) => item.ok).length,
       results,
     });
+
   } catch (error) {
     console.error("Import domains error:", error);
 
