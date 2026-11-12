@@ -18,10 +18,12 @@
       <div class="eyebrow">SECURE WORKSPACE</div><h1 id="authTitle">Welcome back</h1><p id="authSubtitle">Sign in to manage your domain portfolio.</p>
       <form id="authForm">
         <label>Email address<input id="authEmail" type="email" autocomplete="email" placeholder="you@company.com" required></label>
-        <label id="passwordLabel">
+```html
+<label id="passwordLabel">
   Password
 
-  <div class="password-wrapper">
+  <div style="position:relative; width:100%; margin-top:7px;">
+
     <input
       id="authPassword"
       type="password"
@@ -29,16 +31,20 @@
       minlength="6"
       placeholder="At least 6 characters"
       required
+      style="width:100%; padding-right:50px; margin-top:0;"
     >
 
     <button
       type="button"
       id="togglePassword"
-      class="password-toggle"
       aria-label="Show password"
+      style="position:absolute; right:10px; top:50%; transform:translateY(-50%); border:0; background:transparent; cursor:pointer; font-size:20px; display:block; z-index:10;"
     >👁</button>
+
   </div>
 </label>
+```
+
         <button id="authSubmit" class="btn primary full" type="submit">Sign in</button>
       </form>
       <div class="auth-links"><button id="authModeToggle" class="link-btn">Create an account</button><button id="forgotBtn" class="link-btn">Forgot password?</button></div>
@@ -72,6 +78,39 @@
           <div class="page-heading"><div><div class="eyebrow">MONITORING OVERVIEW</div><h1>Good to see you<span class="heading-period">.</span></h1><p class="page-subtitle">Your domain portfolio at a glance.</p></div><div class="heading-actions"><span class="updated-label"><span class="status-dot"></span><span id="updatedLabel">Data sync pending</span></span><button id="refreshBtn" class="btn secondary">↻ Refresh data</button></div></div>
           <div id="setupNotice" class="notice hidden"><strong>Connect your backend to continue</strong><span>Add your Supabase project URL and publishable anon key in <code>config.js</code>, then run the included SQL migration. Until then, data-changing actions are disabled.</span></div>
           <div class="metric-grid">
+                      <!-- Domain Scan -->
+          <section class="panel finder-panel" style="margin-bottom:20px;">
+            <div class="panel-head">
+              <div>
+                <h2>Domain Scan</h2>
+                <p>Scan any domain to retrieve its public registration information.</p>
+              </div>
+              <span class="badge neutral">RDAP LOOKUP</span>
+            </div>
+
+            <form id="overviewScanForm" class="finder-form">
+              <label for="overviewScanInput">Enter domain name</label>
+              <div class="finder-input-row">
+                <input
+                  id="overviewScanInput"
+                  type="text"
+                  placeholder="example.com"
+                  required
+                  autocomplete="off"
+                >
+                <button id="overviewScanBtn" class="btn primary" type="submit">
+                  Scan Domain →
+                </button>
+              </div>
+              <p class="field-help">
+                Retrieve registrar, registration date, expiration date,
+                domain status and nameservers.
+              </p>
+            </form>
+
+            <div id="overviewScanResult" class="finder-result hidden"></div>
+          </section>
+          <!-- End Domain Scan -->
             <article class="metric-card"><div class="metric-top"><span>Total domains</span><span class="metric-icon blue">◈</span></div><div id="metricTotal" class="metric-value">—</div><div class="metric-foot">In your workspace</div></article>
             <article class="metric-card"><div class="metric-top"><span>Expiring in 7 days</span><span class="metric-icon red">!</span></div><div id="metric7" class="metric-value">—</div><div class="metric-foot">Immediate attention</div></article>
             <article class="metric-card"><div class="metric-top"><span>Expiring in 30 days</span><span class="metric-icon amber">◷</span></div><div id="metric30" class="metric-value">—</div><div class="metric-foot">Plan renewals early</div></article>
@@ -81,8 +120,94 @@
           <section class="panel activity-panel"><div class="panel-head"><div><h2>Recent alerts</h2><p>Recent expiry reminders and monitoring events</p></div><button class="text-btn" data-goto="alerts">Open alert center →</button></div><div id="recentAlerts" class="activity-list"><div class="empty-state">No alerts to display.</div></div></section>
         </section>
 
-        <section id="page-domains" class="page"><div class="page-heading"><div><div class="eyebrow">DOMAIN INVENTORY</div><h1>All domains<span class="heading-period">.</span></h1><p class="page-subtitle">Manage renewal dates, portfolios and monitoring status.</p></div><div class="heading-actions"><button id="exportBtn" class="btn secondary">↓ Export CSV</button><button id="importBtn" class="btn secondary">↑ Import CSV</button><button id="addDomainBtn" class="btn primary">＋ Add domain</button></div></div><div class="panel"><div class="table-toolbar"><div class="search-box table-search"><span>⌕</span><input id="domainSearch" placeholder="Search domain or registrar…"></div><select id="statusFilter" class="select-control"><option value="all">All statuses</option><option value="critical">Critical (≤ 7 days)</option><option value="warning">Expiring (8–30 days)</option><option value="healthy">Healthy</option><option value="expired">Expired</option><option value="unknown">Unknown expiry</option></select><select id="portfolioFilter" class="select-control"><option value="all">All portfolios</option></select></div><div id="domainsTable" class="table-wrap"><div class="empty-state">No domains yet. Add a domain to start monitoring.</div></div><div class="table-foot"><span id="domainCountLabel">0 domains</span><span>Expiration data may be unavailable for some TLDs.</span></div></div><div class="inline-note">Registration dates and expiration dates are only shown when returned by the data provider. Registrar auto-renew status cannot normally be verified through public RDAP.</div></section>
+<section id="page-domains" class="page">
 
+  <div class="page-heading">
+    <div>
+      <div class="eyebrow">DOMAIN INVENTORY</div>
+      <h1>All domains<span class="heading-period">.</span></h1>
+      <p class="page-subtitle">Manage renewal dates, portfolios and monitoring status.</p>
+    </div>
+
+    <div class="heading-actions">
+      <button id="exportBtn" class="btn secondary">↓ Export CSV</button>
+      <button id="importBtn" class="btn secondary">↑ Import CSV</button>
+      <button id="addDomainBtn" class="btn primary">＋ Add domain</button>
+    </div>
+  </div>
+
+  <div class="panel">
+
+    <!-- Search and Filters -->
+    <div class="table-toolbar">
+
+      <div class="search-box table-search">
+        <span>⌕</span>
+        <input id="domainSearch" placeholder="Search domain or registrar…">
+      </div>
+
+      <select id="statusFilter" class="select-control">
+        <option value="all">All statuses</option>
+        <option value="critical">Critical (≤ 7 days)</option>
+        <option value="warning">Expiring (8–30 days)</option>
+        <option value="healthy">Healthy</option>
+        <option value="expired">Expired</option>
+        <option value="unknown">Unknown expiry</option>
+      </select>
+
+      <select id="portfolioFilter" class="select-control">
+        <option value="all">All portfolios</option>
+      </select>
+
+    </div>
+
+    <!-- Bulk Actions -->
+    <div id="bulkActions" class="bulk-actions hidden">
+
+      <span>
+        <strong id="selectedDomainCount">0</strong>
+        domains selected
+      </span>
+
+      <div class="bulk-action-buttons">
+
+        <button id="refreshSelectedDomains" class="btn secondary">
+          ↻ Refresh selected
+        </button>
+
+        <button id="deleteSelectedDomains" class="btn secondary">
+          × Delete selected
+        </button>
+
+        <button id="clearDomainSelection" class="btn secondary">
+          Clear selection
+        </button>
+
+      </div>
+
+    </div>
+
+    <!-- Domains Table -->
+    <div id="domainsTable" class="table-wrap">
+      <div class="empty-state">
+        No domains yet. Add a domain to start monitoring.
+      </div>
+    </div>
+
+    <!-- Table Footer -->
+    <div class="table-foot">
+      <span id="domainCountLabel">0 domains</span>
+      <span>Expiration data may be unavailable for some TLDs.</span>
+    </div>
+
+  </div>
+
+  <div class="inline-note">
+    Registration dates and expiration dates are only shown when returned by the data provider.
+    Registrar auto-renew status cannot normally be verified through public RDAP.
+  </div>
+
+</section>
         <section id="page-finder" class="page"><div class="page-heading"><div><div class="eyebrow">PUBLIC REGISTRATION DATA</div><h1>Registration finder<span class="heading-period">.</span></h1><p class="page-subtitle">Look up domain registration information using RDAP.</p></div></div><section class="panel finder-panel"><form id="finderForm" class="finder-form"><label for="finderInput">Domain name</label><div class="finder-input-row"><input id="finderInput" placeholder="example.com" required autocomplete="off"><button id="finderSubmit" class="btn primary" type="submit">Look up domain →</button></div><p class="field-help">Use a registered domain such as example.com. Results depend on TLD and registry support.</p></form><div id="finderResult" class="finder-result hidden"></div></section></section>
 
         <section id="page-calendar" class="page"><div class="page-heading"><div><div class="eyebrow">RENEWAL PLANNING</div><h1>Expiry calendar<span class="heading-period">.</span></h1><p class="page-subtitle">Upcoming domain expirations grouped by month.</p></div><div class="heading-actions"><button id="calendarPrev" class="btn secondary">← Previous</button><button id="calendarToday" class="btn secondary">This month</button><button id="calendarNext" class="btn secondary">Next →</button></div></div><div class="panel"><div class="calendar-title"><h2 id="calendarMonth">Upcoming expirations</h2><span class="muted">Only domains with known expiration dates are shown.</span></div><div id="calendarGrid" class="calendar-grid"></div></div></section>
@@ -100,7 +225,6 @@
   </div>
 
   <dialog id="domainDialog" class="modal"><form id="domainForm" method="dialog"><div class="modal-head"><div><div class="eyebrow">PORTFOLIO MANAGEMENT</div><h2>Add a domain</h2><p>Look up registration data before saving. Missing expiry data remains unknown.</p></div><button type="button" class="icon-btn" data-close-dialog aria-label="Close">×</button></div><label>Domain name<input id="newDomainName" placeholder="example.com" required autocomplete="off"></label><div class="lookup-inline"><button id="precheckBtn" class="btn secondary" type="button">Check registration data</button><span id="precheckStatus" class="field-help">Optional, recommended</span></div><div id="precheckSummary" class="precheck-summary hidden"></div><label>Portfolio<input id="newDomainPortfolio" list="portfolioOptions" placeholder="Production, Client A…" value="Unassigned"><datalist id="portfolioOptions"></datalist></label><label>Notes <span class="muted">(optional)</span><textarea id="newDomainNotes" rows="2" placeholder="Renewal owner, client, or context"></textarea></label><div class="modal-actions"><button type="button" class="btn secondary" data-close-dialog>Cancel</button><button id="saveDomainBtn" type="submit" class="btn primary">Save domain</button></div></form></dialog>
-    <dialog id="domainDialog" class="modal"><form id="domainForm" method="dialog"><div class="modal-head"><div><div class="eyebrow">PORTFOLIO MANAGEMENT</div><h2>Add a domain</h2><p>Look up registration data before saving. Missing expiry data remains unknown.</p></div><button type="button" class="icon-btn" data-close-dialog aria-label="Close">×</button></div><label>Domain name<input id="newDomainName" placeholder="example.com" required autocomplete="off"></label><div class="lookup-inline"><button id="precheckBtn" class="btn secondary" type="button">Check registration data</button><span id="precheckStatus" class="field-help">Optional, recommended</span></div><div id="precheckSummary" class="precheck-summary hidden"></div><label>Portfolio<input id="newDomainPortfolio" list="portfolioOptions" placeholder="Production, Client A…" value="Unassigned"><datalist id="portfolioOptions"></datalist></label><label>Notes <span class="muted">(optional)</span><textarea id="newDomainNotes" rows="2" placeholder="Renewal owner, client, or context"></textarea></label><div class="modal-actions"><button type="button" class="btn secondary" data-close-dialog>Cancel</button><button id="saveDomainBtn" type="submit" class="btn primary">Save domain</button></div></form></dialog>
 <dialog id="importDialog" class="modal">
   <form id="importForm" method="dialog">
 
@@ -169,6 +293,7 @@
 
   </form>
 </dialog>
+
   <dialog id="portfolioDialog" class="modal compact-modal"><form id="portfolioForm" method="dialog"><div class="modal-head"><div><div class="eyebrow">ORGANIZATION</div><h2>New portfolio</h2></div><button type="button" class="icon-btn" data-close-dialog>×</button></div><label>Portfolio name<input id="portfolioName" required placeholder="e.g. Client Projects"></label><div class="modal-actions"><button type="button" class="btn secondary" data-close-dialog>Cancel</button><button type="submit" class="btn primary">Create portfolio</button></div></form></dialog>
   <script src="app.js"></script>
 </body>
