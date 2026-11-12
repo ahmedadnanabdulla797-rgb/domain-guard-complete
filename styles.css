@@ -116,4 +116,89 @@ background: var(--border);
 padding: 23px 12px;
 }
 }
+/* =====================================
+   DOMAIN BULK ACTIONS
+===================================== */
 
+.bulk-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+  margin: 14px 0;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.bulk-actions.hidden {
+  display: none !important;
+}
+
+.bulk-actions > span {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.bulk-actions > span strong {
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.bulk-action-buttons {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.bulk-action-buttons button {
+  font-size: 10px;
+}
+
+.bulk-action-buttons button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Selected domain row */
+
+.data-table tbody tr.domain-selected {
+  background: var(--accent-soft);
+}
+
+.data-table tbody tr.domain-selected:hover {
+  background: var(--accent-soft);
+}
+
+/* Domain selection checkboxes */
+
+.domain-select-checkbox,
+#selectAllDomains {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--accent);
+  vertical-align: middle;
+}
+
+/* Mobile layout */
+
+@media (max-width: 620px) {
+  .bulk-actions {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 13px;
+  }
+
+  .bulk-action-buttons {
+    width: 100%;
+  }
+
+  .bulk-action-buttons button {
+    flex: 1;
+  }
+}
