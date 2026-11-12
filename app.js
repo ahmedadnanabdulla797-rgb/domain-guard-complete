@@ -132,8 +132,53 @@ function alertMarkup(a) { const isCritical = a.severity === 'critical' || /expir
   function goPage(page) { state.page = page; document.querySelectorAll('.page').forEach(el=>el.classList.toggle('active', el.id === `page-${page}`)); document.querySelectorAll('.nav-item[data-page]').forEach(el=>el.classList.toggle('active', el.dataset.page === page)); const active = document.querySelector(`.nav-item[data-page="${page}"]`); $('pageCrumb').textContent = active ? active.textContent.trim().replace(/\d+$/,'').trim() : 'Overview'; if(page==='domains')renderDomains(); if(page==='alerts')renderAlerts(); if(page==='calendar')renderCalendar(); if(page==='portfolios')renderPortfolios(); $('sidebar').classList.remove('open'); $('mobileScrim').classList.remove('show'); window.scrollTo({top:0,behavior:'smooth'}); }
   function renderCalendar() { const date = state.calendarDate; const year=date.getFullYear(),month=date.getMonth(); $('calendarMonth').textContent=date.toLocaleDateString(undefined,{month:'long',year:'numeric'}); const first=new Date(year,month,1); const start=new Date(year,month,1-first.getDay()); const weekdays=['Sun','Mon','Tue','Wed','Thu','Fri','Sat']; let html=weekdays.map(d=>`<div class="calendar-weekday">${d}</div>`).join(''); const today=dateOnly(new Date()); for(let i=0;i<42;i++){const day=new Date(start);day.setDate(start.getDate()+i);const key=dateOnly(day);const events=state.domains.filter(d=>d.expiration_date===key);html+=`<div class="calendar-day ${day.getMonth()!==month?'outside':''} ${key===today?'today':''}"><div class="calendar-day-number">${day.getDate()}</div>${events.slice(0,3).map(d=>`<button class="calendar-domain ${statusFor(d)}" title="${esc(d.domain_name)}" data-calendar-domain="${esc(d.domain_name)}">${esc(d.domain_name)}</button>`).join('')}${events.length>3?`<div class="muted">+${events.length-3} more</div>`:''}</div>`;} $('calendarGrid').innerHTML=html; }
   function parseRdap(data, domain) { const events = data.events || []; const findDate = action => dateOnly(events.find(e=>e.eventAction===action)?.eventDate); const registrarEntity = (data.entities||[]).find(e=>(e.roles||[]).includes('registrar')); let registrar = ''; if(registrarEntity?.vcardArray?.[1]) { const v=registrarEntity.vcardArray[1]; registrar = v.find(row=>row[0]==='fn')?.[3] || v.find(row=>row[0]==='org')?.[3] || ''; } return { domain, registration_date:findDate('registration'), expiration_date:findDate('expiration'), registrar_name:registrar || null, nameservers:(data.nameservers||[]).map(ns=>ns.ldhName).filter(Boolean), status_codes:data.status||[], data_source:data.port43 || data.rdapConformance?.join(', ') || 'RDAP', raw:data } }
-  async function rdapLookup(raw) { const domain=validDomain(raw); if(!domain) throw new Error('Enter a valid domain name such as example.com.'); const response=await fetch(`https://rdap.org/domain/${encodeURIComponent(domain)}`,{headers:{Accept:'application/rdap+json, application/json'},cache:'no-store'}); if(response.status===404) throw new Error('No registration record was found. This does not prove the domain is available.'); if(!response.ok) throw new Error(`RDAP lookup failed (${response.status}). Try again later or check whether this TLD supports RDAP.`); const data=await response.json(); return parseRdap(data,domain); }
-function renderFinderResult(result, target = 'finderResult') {
+async function rdapLookup(raw) {
+  const domain = validDomain(raw);
+
+  if (!domain) {
+    throw new Error(
+      'Enter a valid domain name such as example.com.'
+    );
+  }
+
+  if (!client) {
+    throw new Error('Supabase connection is unavailable.');
+  }
+
+  const { data, error } = await client.functions.invoke(
+    'import-domains',
+    {
+      body: {
+        domains: [domain]
+      }
+    }
+  );
+
+  if (error) {
+    throw new Error(
+      error.message || 'Domain lookup service is unavailable.'
+    );
+  }
+
+  const result = data?.results?.[0];
+
+  if (!result) {
+    throw new Error('No lookup result was returned.');
+  }
+
+  if (!result.ok) {
+    throw new Error(
+      result.error || 'Domain registration lookup failed.'
+    );
+  }
+
+  if (!result.rdap) {
+    throw new Error('Registration information is incomplete.');
+  }
+
+  return parseRdap(result.rdap, domain);
+}
+  function renderFinderResult(result, target = 'finderResult') {
   const days = daysRemaining(result.expiration_date);
 
   const status = result.expiration_date
