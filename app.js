@@ -12,7 +12,21 @@
   function validDomain(raw) { const s = String(raw || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, '').replace(/\.$/, ''); if (!s || s.length > 253 || s.includes(' ')) return null; const labels = s.split('.'); if (labels.length < 2 || labels.some(x => !x || x.length > 63 || !/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(x))) return null; return s; }
   function dateOnly(v) { if (!v) return null; const d = new Date(v); if (Number.isNaN(d.getTime())) return null; return d.toISOString().slice(0, 10); }
   function daysRemaining(date) { if (!date) return null; const today = new Date(); today.setHours(0,0,0,0); const expiry = new Date(`${date}T00:00:00`); return Math.ceil((expiry - today) / 86400000); }
-  function statusFor(domain) { const days = daysRemaining(domain.expiration_date); if (domain.last_check_error) return 'error'; if (days === null) return 'unknown'; if (days < 0) return 'expired'; if (days <= 7) return 'critical'; if (days <= 30) return 'warning'; return 'healthy'; }
+  function statusFor(domain) {
+  const days = daysRemaining(domain.expiration_date);
+
+  // No expiration date available
+  if (days === null) {
+    return domain.last_check_error ? 'error' : 'unknown';
+  }
+
+  // Determine actual domain expiry status
+  if (days < 0) return 'expired';
+  if (days <= 7) return 'critical';
+  if (days <= 30) return 'warning';
+
+  return 'healthy';
+}
   function statusLabel(status) { return ({ healthy: 'Healthy', warning: 'Expiring soon', critical: 'Critical', expired: 'Expired', unknown: 'Unknown expiry', error: 'Check failed' })[status] || status; }
   function badge(status) { const normalized = ['healthy','warning','critical','expired','unknown','error'].includes(status) ? status : 'neutral'; return `<span class="badge ${normalized === 'unknown' || normalized === 'error' ? 'neutral' : normalized}">${esc(statusLabel(status))}</span>`; }
   function prettyDate(value) { if (!value) return 'Not available'; const d = new Date(`${dateOnly(value)}T00:00:00`); return Number.isNaN(d.getTime()) ? 'Not available' : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); }
