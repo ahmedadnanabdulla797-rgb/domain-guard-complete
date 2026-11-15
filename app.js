@@ -184,11 +184,27 @@ async function rdapLookup(raw) {
     throw new Error('No lookup result was returned.');
   }
 
-  if (!result.ok) {
-    throw new Error(
-      result.error || 'Domain registration lookup failed.'
-    );
+ if (!result.ok) {
+
+  // Provider responded, but returned no registration record.
+  if (result.code === 'NO_REGISTRATION_RECORD') {
+    return {
+      domain: result.domain || domain,
+      registration_date: null,
+      expiration_date: null,
+      registrar_name: '',
+      status_codes: [],
+      nameservers: [],
+      data_source: 'WhoisJSON',
+      lookup_outcome: 'no_registration_record'
+    };
   }
+
+  // Genuine API or network failure.
+  throw new Error(
+    result.error || 'Domain registration lookup failed.'
+  );
+}
 
   if (!result.rdap) {
     throw new Error('Registration information is incomplete.');
@@ -199,7 +215,12 @@ async function rdapLookup(raw) {
   function renderFinderResult(result, target = 'finderResult') {
   const days = daysRemaining(result.expiration_date);
 
-  const status = result.expiration_date
+ const noRecord =
+  result.lookup_outcome === 'no_registration_record';
+
+const status = noRecord
+  ? 'No registration record found'
+  : result.expiration_date
     ? (days < 0 ? 'Expired' : days <= 7 ? 'Critical' : days <= 30 ? 'Expiring soon' : 'Active')
     : 'Expiry not published';
 
@@ -214,7 +235,13 @@ async function rdapLookup(raw) {
     <div class="result-banner">
       <div>
         <h2>${esc(result.domain)}</h2>
-        <p>Lookup completed · ${esc(result.data_source || 'RDAP')} · ${new Date().toLocaleString()}</p>
+        <p>
+  ${noRecord
+    ? 'Provider responded · No registration record returned'
+    : 'Lookup completed'}
+  · ${esc(result.data_source || 'RDAP')}
+  · ${new Date().toLocaleString()}
+</p>
       </div>
       ${badge(result.expiration_date ? (days < 0 ? 'expired' : days <= 7 ? 'critical' : days <= 30 ? 'warning' : 'healthy') : 'unknown')}
     </div>
@@ -229,6 +256,9 @@ async function rdapLookup(raw) {
     </div>
 
     <div class="result-detail">
+     ${noRecord
+  ? '<p class="muted">The lookup provider did not return a registration record. This does not confirm that the domain is available.</p>'
+  : ''} 
       <h3>Registration record</h3>
       <code>${esc(JSON.stringify({
         domain: result.domain,
