@@ -3,7 +3,7 @@ import { createClient } from "npm:@supabase/supabase-js@2";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, apikey, content-type, x-client-info",
+    "authorization, apikey, content-type, x-client-info, x-supabase-api-version",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
@@ -237,9 +237,9 @@ Deno.serve(async (req) => {
         .toLowerCase();
 
       const valid =
-        /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(
-          domain
-        );
+  /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(
+    domain
+  );
 
       if (!valid) {
         results.push({
@@ -255,7 +255,7 @@ Deno.serve(async (req) => {
       results.push(await lookupDomain(domain));
 
       if (results.length < domains.length) {
-        await sleep(1200);
+        await sleep(3500);
       }
     }
 
