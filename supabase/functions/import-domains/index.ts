@@ -33,10 +33,7 @@ async function lookupDomain(domain: string) {
   }
 
   try {
-    const url = new URL(
-      "https://whoisjson.com/api/v1/whois"
-    );
-
+    const url = new URL("https://whoisjson.com/api/v1/whois");
     url.searchParams.set("domain", domain);
 
     const response = await fetch(url.toString(), {
@@ -72,6 +69,30 @@ async function lookupDomain(domain: string) {
 
     const data = await response.json();
 
+    // Validate the API response before using it.
+    if (
+      !data ||
+      typeof data !== "object" ||
+      Array.isArray(data)
+    ) {
+      throw new Error("Invalid WHOISJSON response.");
+    }
+
+    // Diagnostic information for Supabase Edge Function logs.
+    console.log("WHOISJSON diagnostic:", {
+      domain,
+      registered: data.registered,
+      name: data.name,
+      created: data.created,
+      expires: data.expires,
+      registrar:
+        typeof data.registrar === "string"
+          ? data.registrar
+          : data.registrar?.name,
+      responseFields: Object.keys(data),
+    });
+
+    // A missing registration record is not proof of availability.
     if (data.registered === false) {
       return {
         domain,
@@ -87,43 +108,72 @@ async function lookupDomain(domain: string) {
         ? data.registrar
         : data.registrar?.name || "";
 
-    const nameservers = Array.isArray(data.nameserver)
+    const rawNameservers = Array.isArray(data.nameserver)
       ? data.nameserver
       : Array.isArray(data.nameservers)
         ? data.nameservers
         : [];
 
-    // Convert WhoisJSON response into the RDAP-style
+    const nameservers = rawNameservers
+      .map((item: unknown) => {
+        if (typeof item === "string") return item;
+
+        if (
+          item &&
+          typeof item === "object" &&
+          "name" in item &&
+          typeof item.name === "string"
+        ) {
+          return item.name;
+        }
+
+        return "";
+      })
+      .filter((name: string) => name.length > 0);
+
+    // Convert WHOISJSON response into the RDAP-style
     // structure already used by DomainGuard.
     const rdap = {
       name: data.name || domain,
+
       events: [
         ...(data.created
-          ? [{
-              eventAction: "registration",
-              eventDate: data.created,
-            }]
+          ? [
+              {
+                eventAction: "registration",
+                eventDate: data.created,
+              },
+            ]
           : []),
+
         ...(data.expires
-          ? [{
-              eventAction: "expiration",
-              eventDate: data.expires,
-            }]
+          ? [
+              {
+                eventAction: "expiration",
+                eventDate: data.expires,
+              },
+            ]
           : []),
       ],
+
       entities: registrarName
-        ? [{
-            roles: ["registrar"],
-            vcardArray: [
-              "vcard",
-              [["fn", {}, "text", registrarName]],
-            ],
-          }]
+        ? [
+            {
+              roles: ["registrar"],
+              vcardArray: [
+                "vcard",
+                [["fn", {}, "text", registrarName]],
+              ],
+            },
+          ]
         : [],
+
       nameservers: nameservers.map((name: string) => ({
         ldhName: name,
       })),
+
       status: Array.isArray(data.status) ? data.status : [],
+
       port43: "WhoisJSON API",
       rdapConformance: [],
       providerData: data,
@@ -231,15 +281,16 @@ Deno.serve(async (req) => {
 
     const results = [];
 
-    for (const value of domains) {
-      const domain = String(value || "")
+    for (let i = 0; i < domains.length; i++) {
+      const domain = String(domains[i] || "")
         .trim()
         .toLowerCase();
 
+      // Correct domain validation regex.
       const valid =
-  /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(
-    domain
-  );
+        /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(
+          domain
+        );
 
       if (!valid) {
         results.push({
@@ -254,7 +305,8 @@ Deno.serve(async (req) => {
 
       results.push(await lookupDomain(domain));
 
-      if (results.length < domains.length) {
+      // Wait between API requests to reduce rate-limit errors.
+      if (i < domains.length - 1) {
         await sleep(3500);
       }
     }
