@@ -93,15 +93,17 @@ async function lookupDomain(domain: string) {
     });
 
     // A missing registration record is not proof of availability.
+  
     if (data.registered === false) {
-      return {
-        domain,
-        ok: false,
-        status: 404,
-        error:
-          "No registration record was found. Confirm availability with a registrar.",
-      };
-    }
+  return {
+    domain,
+    ok: false,
+    status: 404,
+    code: "NO_REGISTRATION_RECORD",
+    error:
+      "No registration record was returned by the lookup provider. This does not prove availability.",
+  };
+}
 
     const registrarName =
       typeof data.registrar === "string"
