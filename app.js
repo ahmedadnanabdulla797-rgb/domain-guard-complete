@@ -15,12 +15,16 @@
   function statusFor(domain) {
   const days = daysRemaining(domain.expiration_date);
 
-  // No expiration date available
-  if (days === null) {
-    return domain.last_check_error ? 'error' : 'unknown';
+  // Lookup failed and no expiration date is available
+  if (days === null && domain.last_check_error) {
+    return 'error';
   }
 
-  // Determine actual domain expiry status
+  // Lookup succeeded, but expiration date was not provided
+  if (days === null) {
+    return 'unknown';
+  }
+
   if (days < 0) return 'expired';
   if (days <= 7) return 'critical';
   if (days <= 30) return 'warning';
