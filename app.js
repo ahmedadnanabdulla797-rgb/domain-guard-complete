@@ -457,6 +457,8 @@ async function refreshSelectedDomains() {
     button.textContent = '↻ Refresh selected';
   }
 }
+}
+
 // CSV FILE UPLOAD AND DRAG & DROP
 // =====================================
 
