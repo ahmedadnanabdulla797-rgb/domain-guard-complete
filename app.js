@@ -385,11 +385,14 @@ async function refreshSelectedDomains() {
                     domain.domain_status ||
                     'unknown',
 
-                  data_source:
-                    lookup.data_source || 'WhoisJSON API',
+                 data_source:
+  lookup.data_source || 'WhoisJSON API',
 
-                  last_checked_at: new Date().toISOString(),
-                  next_check_at: new Date().toISOString()
+// Clear any previous lookup error after a successful check.
+last_check_error: null,
+
+last_checked_at: new Date().toISOString(),
+next_check_at: new Date().toISOString()
                 })
                 .eq('id', domain.id)
                 .eq('owner_id', state.user.id)
