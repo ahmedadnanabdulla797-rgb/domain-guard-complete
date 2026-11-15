@@ -309,183 +309,22 @@ async function refreshSelectedDomains() {
   let updated = 0;
   let failed = 0;
 
+  const batchSize = 10;
+  const batchDelay = 30000;
+
   try {
-    for (let i = 0; i < selected.length; i += 10) {
-      const batch = selected.slice(i, i + 10);
+    for (let i = 0; i < selected.length; i += batchSize) {
+      const batch = selected.slice(i, i + batchSize);
 
       button.textContent =
-        `Checking ${Math.min(i + 10, selected.length)} of ${selected.length}...`;
-
-      const { data, error } = await client.functions.invoke(
-        'import-domains',
-        {
-          body: {
-            domains: batch.map(d => d.domain_name)
-          }
-        }
-      );
-
-      if (error) throw error;
-
-      if (!data || !Array.isArray(data.results)) {
-        throw new Error('Invalid response from domain lookup function.');
-      }
-
-      for (const domain of batch) {
-        const result = data.results.find(
-          r => r.domain?.toLowerCase() === domain.domain_name.toLowerCase()
-        );
-
-        if (!result?.ok || !result.rdap) {
-          failed++;
-          continue;
-        }
-
-        try {
-          const lookup = parseRdap(result.rdap, domain.domain_name);
-
-          const { data: saved, error: updateError } = await client
-            .from('domains')
-            .update({
-              registrar_name: lookup.registrar_name || null,
-              registration_date: lookup.registration_date || null,
-              expiration_date: lookup.expiration_date || null,
-              nameservers: lookup.nameservers || [],
-              domain_status: (lookup.status_codes || []).join(', ') || 'unknown',
-              data_source: lookup.data_source || 'RDAP',
-              last_checked_at: new Date().toISOString(),
-              next_check_at: new Date().toISOString()
-            })
-            .eq('id', domain.id)
-            .eq('owner_id', state.user.id)
-            .select()
-            .single();
-
-          if (updateError) throw updateError;
-
-          state.domains = state.domains.map(d =>
-            d.id === domain.id ? saved : d
-          );
-
-          updated++;
-
-        } catch (err) {
-          console.error(`Refresh failed for ${domain.domain_name}:`, err);
-          failed++;
-        }
-      }
-    }
-
-    state.selectedDomainIds.clear();
-    renderAll();
-
-    toast(
-      `Refresh complete: ${updated} updated, ${failed} unavailable.`,
-      updated ? 'success' : 'error'
-    );
-
-  } catch (err) {
-    console.error('Bulk refresh error:', err);
-    toast(err.message || 'Could not refresh selected domains.', 'error');
-
-  } finally {
-    button.disabled = false;
-    button.textContent = '↻ Refresh selected';
-  }
-}
-
-async function deleteSelectedDomains() {
-  if (!state.user || !client) {
-    return toast('Please sign in first.', 'error');
-  }
-
-  const ids = [...state.selectedDomainIds];
-
-  if (!ids.length) {
-    return toast('Select domains to delete.', 'error');
-  }
-
-  if (!confirm(
-    `Are you sure you want to delete ${ids.length} selected domain(s)? This cannot be undone.`
-  )) {
-    return;
-  }
-
-  const { error } = await client
-    .from('domains')
-    .delete()
-    .in('id', ids)
-    .eq('owner_id', state.user.id);
-
-  if (error) {
-    return toast(error.message, 'error');
-  }
-
-  state.domains = state.domains.filter(d => !ids.includes(d.id));
-  state.alerts = state.alerts.filter(a => !ids.includes(a.domain_id));
-  state.selectedDomainIds.clear();
-
-  renderAll();
-
-  toast(`${ids.length} domain(s) deleted.`, 'success');
-}
- async function importDomains(e) {
-  e.preventDefault();
-
-  const raw = $('importText').value.trim();
-  if (!raw) return;
-
-  const lines = raw.split(/\r?\n/).map(x => x.trim()).filter(Boolean);
-  const newDomains = [];
-
-  const seen = new Set(
-    state.domains.map(d => d.domain_name.toLowerCase())
-  );
-
-  for (const line of lines) {
-    const parts = line.split(',').map(x => x.trim());
-    const domain = validDomain(parts[0]);
-
-    if (!domain || seen.has(domain.toLowerCase())) continue;
-
-    seen.add(domain.toLowerCase());
-
-    newDomains.push({
-      domain,
-      portfolio: parts[1] || 'Unassigned',
-      notes: parts.slice(2).join(',') || null
-    });
-  }
-
-  if (!newDomains.length) {
-    return toast(
-      'No new valid domains found. Existing and invalid domains were skipped.',
-      'error'
-    );
-  }
-
-  const importBtn = $('importForm').querySelector('[type="submit"]');
-
-  if (importBtn) {
-    importBtn.disabled = true;
-    importBtn.textContent = 'Checking domains...';
-  }
-
-  try {
-    const rows = [];
-    const batchSize = 10;
-
-    for (let i = 0; i < newDomains.length; i += batchSize) {
-      const batch = newDomains.slice(i, i + batchSize);
-
-      let results = [];
+        `Checking ${Math.min(i + batch.length, selected.length)} of ${selected.length}...`;
 
       try {
         const { data, error } = await client.functions.invoke(
           'import-domains',
           {
             body: {
-              domains: batch.map(item => item.domain)
+              domains: batch.map(d => d.domain_name)
             }
           }
         );
@@ -493,100 +332,129 @@ async function deleteSelectedDomains() {
         if (error) throw error;
 
         if (!data || !Array.isArray(data.results)) {
-          throw new Error('Invalid response from domain lookup function.');
+          throw new Error('Invalid lookup response.');
         }
 
-        results = data.results;
+        for (const domain of batch) {
+          const result = data.results.find(
+            r => r.domain?.toLowerCase() ===
+              domain.domain_name.toLowerCase()
+          );
 
-      } catch (error) {
-        console.error('Server-side RDAP lookup failed:', error);
+          if (!result?.ok || !result.rdap) {
+            console.warn(
+              `Lookup unavailable: ${domain.domain_name}`,
+              result?.error
+            );
+            failed++;
+            continue;
+          }
 
-        results = batch.map(item => ({
-          domain: item.domain,
-          ok: false,
-          error: error.message || 'Server lookup failed.'
-        }));
-      }
-
-      for (const item of batch) {
-        const result = results.find(
-          r => r.domain?.toLowerCase() === item.domain.toLowerCase()
-        );
-
-        let lookup = null;
-
-        if (result?.ok && result.rdap) {
           try {
-            lookup = parseRdap(result.rdap, item.domain);
-          } catch (error) {
-            console.warn(`Could not parse ${item.domain}:`, error);
+            const lookup = parseRdap(
+              result.rdap,
+              domain.domain_name
+            );
+
+            const { data: saved, error: updateError } =
+              await client
+                .from('domains')
+                .update({
+                  registrar_name:
+                    lookup.registrar_name ||
+                    domain.registrar_name ||
+                    null,
+
+                  registration_date:
+                    lookup.registration_date ||
+                    domain.registration_date ||
+                    null,
+
+                  expiration_date:
+                    lookup.expiration_date ||
+                    domain.expiration_date ||
+                    null,
+
+                  nameservers:
+                    lookup.nameservers?.length
+                      ? lookup.nameservers
+                      : domain.nameservers || [],
+
+                  domain_status:
+                    (lookup.status_codes || []).join(', ') ||
+                    domain.domain_status ||
+                    'unknown',
+
+                  data_source:
+                    lookup.data_source || 'WhoisJSON API',
+
+                  last_checked_at: new Date().toISOString(),
+                  next_check_at: new Date().toISOString()
+                })
+                .eq('id', domain.id)
+                .eq('owner_id', state.user.id)
+                .select()
+                .single();
+
+            if (updateError) throw updateError;
+
+            state.domains = state.domains.map(d =>
+              d.id === domain.id ? saved : d
+            );
+
+            updated++;
+
+          } catch (err) {
+            console.error(
+              `Saving failed for ${domain.domain_name}:`,
+              err
+            );
+            failed++;
           }
         }
 
-        const checkedAt = lookup ? new Date().toISOString() : null;
-
-        rows.push({
-          owner_id: state.user.id,
-          domain_name: item.domain,
-          tld: item.domain.split('.').pop(),
-          registrar_name: lookup?.registrar_name || null,
-          registration_date: lookup?.registration_date || null,
-          expiration_date: lookup?.expiration_date || null,
-          nameservers: lookup?.nameservers || [],
-          domain_status: (lookup?.status_codes || []).join(', ') || 'unknown',
-          portfolio: item.portfolio,
-          notes: item.notes,
-          data_source: lookup?.data_source || null,
-          last_checked_at: checkedAt,
-          next_check_at: new Date().toISOString()
-        });
+      } catch (err) {
+        console.error('Batch lookup failed:', err);
+        failed += batch.length;
       }
 
-      if (importBtn) {
-        importBtn.textContent =
-          `Checking ${Math.min(i + batch.length, newDomains.length)} of ${newDomains.length}...`;
+      const completed = Math.min(
+        i + batch.length,
+        selected.length
+      );
+
+      button.textContent =
+        `Completed ${completed} of ${selected.length}...`;
+
+      // Wait between batches to reduce API rate-limit errors.
+      if (i + batchSize < selected.length) {
+        button.textContent =
+          `Waiting before next batch (${completed}/${selected.length})...`;
+
+        await new Promise(resolve =>
+          setTimeout(resolve, batchDelay)
+        );
       }
     }
 
-    const { data, error } = await client
-      .from('domains')
-      .insert(rows)
-      .select();
-
-    if (error) throw error;
-
-    state.domains.push(...data);
-
-    $('importDialog').close();
-    $('importText').value = '';
-
-    if ($('csvFileName')) {
-      $('csvFileName').textContent = '';
-      $('csvFileName').classList.add('hidden');
-    }
-
+    state.selectedDomainIds.clear();
     renderAll();
 
-    const successful = rows.filter(
-      row => row.last_checked_at !== null
-    ).length;
-
-    const failed = rows.length - successful;
-
     toast(
-      `Imported ${data.length} domains. RDAP checked ${successful}; ${failed} need another check.`,
-      'success'
+      `Refresh complete: ${updated} updated, ${failed} failed.`,
+      updated ? 'success' : 'error'
     );
 
   } catch (err) {
-    console.error('Domain import failed:', err);
-    toast(`Import failed: ${err.message}`, 'error');
+    console.error('Bulk refresh error:', err);
+    toast(
+      err.message || 'Could not refresh selected domains.',
+      'error'
+    );
 
   } finally {
-    if (importBtn) {
-      importBtn.disabled = false;
-      importBtn.textContent = 'Import domains';
-    }
+    button.disabled = false;
+    button.textContent = '↻ Refresh selected';
   }
 }
 // CSV FILE UPLOAD AND DRAG & DROP
