@@ -457,7 +457,7 @@ async function refreshSelectedDomains() {
     button.textContent = '↻ Refresh selected';
   }
 }
-}
+
 
 // CSV FILE UPLOAD AND DRAG & DROP
 // =====================================
@@ -533,6 +533,226 @@ function bindCsvUpload() {
     }
   });
 } 
+  function parseCsvRows(text) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let quoted = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+
+    if (ch === '"') {
+      if (quoted && text[i + 1] === '"') {
+        cell += '"';
+        i++;
+      } else {
+        quoted = !quoted;
+      }
+    } else if (ch === ',' && !quoted) {
+      row.push(cell.trim());
+      cell = '';
+    } else if ((ch === '\n' || ch === '\r') && !quoted) {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+
+      row.push(cell.trim());
+      cell = '';
+
+      if (row.some(value => value !== '')) rows.push(row);
+      row = [];
+    } else {
+      cell += ch;
+    }
+  }
+
+  row.push(cell.trim());
+
+  if (row.some(value => value !== '')) rows.push(row);
+
+  return rows;
+}
+
+async function importDomains(e) {
+  e.preventDefault();
+
+  if (!client || !state.user) {
+    return toast('Please sign in first.', 'error');
+  }
+
+  const raw = $('importText')?.value || '';
+
+  if (!raw.trim()) {
+    return toast('Paste CSV data or choose a CSV file first.', 'error');
+  }
+
+  const rows = parseCsvRows(raw);
+
+  if (!rows.length) {
+    return toast('No valid CSV rows were found.', 'error');
+  }
+
+  const first = rows[0].map(v =>
+    v.toLowerCase().replace(/[\s-]+/g, '_')
+  );
+
+  const hasHeader = first.some(v =>
+    ['domain', 'domain_name', 'website'].includes(v)
+  );
+
+  const headers = hasHeader ? first : ['domain_name'];
+  const dataRows = hasHeader ? rows.slice(1) : rows;
+
+  const column = (...names) => {
+    for (const name of names) {
+      const index = headers.indexOf(name);
+      if (index >= 0) return index;
+    }
+    return -1;
+  };
+
+  const domainCol = column('domain_name', 'domain', 'website');
+
+  if (domainCol < 0) {
+    return toast('CSV needs a domain or domain_name column.', 'error');
+  }
+
+  const existing = new Set(
+    state.domains.map(d => d.domain_name.toLowerCase())
+  );
+
+  const seen = new Set();
+  const records = [];
+  let skipped = 0;
+
+  for (const values of dataRows) {
+    const domain = validDomain(values[domainCol]);
+
+    if (!domain || existing.has(domain) || seen.has(domain)) {
+      skipped++;
+      continue;
+    }
+
+    seen.add(domain);
+
+    const value = (...names) => {
+      const index = column(...names);
+      return index >= 0 ? (values[index] || '').trim() : '';
+    };
+
+    records.push({
+      owner_id: state.user.id,
+      domain_name: domain,
+      tld: domain.split('.').pop(),
+      registrar_name: value('registrar_name', 'registrar') || null,
+      registration_date: dateOnly(
+        value('registration_date', 'created_date')
+      ) || null,
+      expiration_date: dateOnly(
+        value('expiration_date', 'expiry_date', 'expires')
+      ) || null,
+      nameservers: [],
+      domain_status: 'pending',
+      portfolio: value('portfolio') || 'Unassigned',
+      notes: value('notes') || null,
+      data_source: null,
+      last_checked_at: null,
+      next_check_at: new Date().toISOString()
+    });
+  }
+
+  if (!records.length) {
+    return toast(
+      `No new valid domains to import. ${skipped} skipped.`,
+      'error'
+    );
+  }
+
+  const button = $('importBtn');
+
+  if (button) button.disabled = true;
+
+  try {
+    const { data, error } = await client
+      .from('domains')
+      .insert(records)
+      .select();
+
+    if (error) throw error;
+
+    state.domains.push(...(data || []));
+
+    renderAll();
+
+    $('importDialog')?.close();
+
+    if ($('importText')) $('importText').value = '';
+
+    if ($('csvFileName')) {
+      $('csvFileName').classList.add('hidden');
+    }
+
+    toast(
+      `Imported ${(data || []).length} domains. ${skipped} skipped. Use Refresh selected to retrieve registration details.`,
+      'success'
+    );
+
+  } catch (err) {
+    toast(`Import failed: ${err.message}`, 'error');
+
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function deleteSelectedDomains() {
+  if (!client || !state.user) {
+    return toast('Please sign in first.', 'error');
+  }
+
+  const ids = [...state.selectedDomainIds];
+
+  if (!ids.length) {
+    return toast('Select at least one domain.', 'error');
+  }
+
+  const count = ids.length;
+
+  if (!confirm(
+    `Delete ${count} selected domain${count === 1 ? '' : 's'}? This cannot be undone.`
+  )) return;
+
+  const button = $('deleteSelectedDomains');
+
+  if (button) button.disabled = true;
+
+  try {
+    const { error } = await client
+      .from('domains')
+      .delete()
+      .in('id', ids)
+      .eq('owner_id', state.user.id);
+
+    if (error) throw error;
+
+    const removed = new Set(ids.map(String));
+
+    state.domains = state.domains.filter(
+      d => !removed.has(String(d.id))
+    );
+
+    state.selectedDomainIds.clear();
+
+    renderAll();
+
+    toast(`${count} domain${count === 1 ? '' : 's'} deleted.`, 'success');
+
+  } catch (err) {
+    toast(`Bulk delete failed: ${err.message}`, 'error');
+
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
   function exportCsv() { const headers=['domain_name','registrar_name','registration_date','expiration_date','portfolio','domain_status','last_checked_at','notes'];const csv=[headers.join(','),...state.domains.map(d=>headers.map(h=>`"${String(d[h]??'').replace(/"/g,'""')}"`).join(','))].join('\r\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='domainguard-domains.csv';a.click();URL.revokeObjectURL(url);toast('CSV export created.','success'); }
   async function savePortfolio(e) { e.preventDefault();const name=$('portfolioName').value.trim();if(!name)return;if(state.portfolios.some(p=>p.name.toLowerCase()===name.toLowerCase()))return toast('That portfolio already exists.','error');const {data,error}=await client.from('portfolios').insert({owner_id:state.user.id,name}).select().single();if(error)return toast(error.message,'error');state.portfolios.push(data);$('portfolioDialog').close();$('portfolioName').value='';renderAll();toast('Portfolio created. Assign domains to it when adding or editing a domain.','success'); }
   async function deletePortfolio(id,name) { if(!confirm(`Delete portfolio “${name}”? Domains assigned to it will remain in your account.`))return;const {error}=await client.from('portfolios').delete().eq('id',id);if(error)return toast(error.message,'error');state.portfolios=state.portfolios.filter(p=>p.id!==id);renderAll();toast('Portfolio deleted.','success'); }
