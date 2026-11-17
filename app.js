@@ -405,14 +405,12 @@ async function refreshSelectedDomains() {
                     domain.domain_status ||
                     'unknown',
 
-                 data_source:
-  lookup.data_source || 'WhoisJSON API',
+                  data_source:
+                    lookup.data_source || 'WhoisJSON API',
 
-// Clear any previous lookup error after a successful check.
-last_check_error: null,
-
-last_checked_at: new Date().toISOString(),
-next_check_at: new Date().toISOString()
+                  last_check_error: null,
+                  last_checked_at: new Date().toISOString(),
+                  next_check_at: new Date().toISOString()
                 })
                 .eq('id', domain.id)
                 .eq('owner_id', state.user.id)
@@ -449,11 +447,13 @@ next_check_at: new Date().toISOString()
       button.textContent =
         `Completed ${completed} of ${selected.length}...`;
 
-      // Wait between batches to reduce API rate-limit errors.
-      if (i + batchSize < selected.length){
-  await new Promise(resolve=>setTimeout(resolve,batchDelay));
-
-    }
+      // Pause between batches without displaying a waiting message.
+      if (i + batchSize < selected.length) {
+        await new Promise(resolve =>
+          setTimeout(resolve, batchDelay)
+        );
+      }
+    } // This closes the FOR loop correctly.
 
     state.selectedDomainIds.clear();
     renderAll();
@@ -465,6 +465,7 @@ next_check_at: new Date().toISOString()
 
   } catch (err) {
     console.error('Bulk refresh error:', err);
+
     toast(
       err.message || 'Could not refresh selected domains.',
       'error'
@@ -475,7 +476,6 @@ next_check_at: new Date().toISOString()
     button.textContent = '↻ Refresh selected';
   }
 }
-
 
 // CSV FILE UPLOAD AND DRAG & DROP
 // =====================================
