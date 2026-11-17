@@ -279,35 +279,7 @@ const status = noRecord
 
   $(saveButtonId).addEventListener('click', () => openAddWithLookup(result));
 }
-  async function handleOverviewScan(e) {
-  e.preventDefault();
-
-  const btn = $('overviewScanBtn');
-  const resultBox = $('overviewScanResult');
-
-  btn.disabled = true;
-  btn.textContent = 'Scanning…';
-  resultBox.classList.add('hidden');
-
-  try {
-    const result = await rdapLookup($('overviewScanInput').value);
-    state.lookup = result;
-    renderFinderResult(result, 'overviewScanResult');
-  } catch (err) {
-    resultBox.classList.remove('hidden');
-    resultBox.innerHTML = `
-      <div class="result-banner">
-        <div>
-          <h2>Scan unavailable</h2>
-          <p>${esc(err.message)}</p>
-        </div>
-        <span class="badge neutral">No verified result</span>
-      </div>`;
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Scan Domain';
-  }
-}
+ 
   function openAddWithLookup(result=null) { if(!client || !state.user) return toast('Connect Supabase and sign in to save domains.', 'error'); state.addLookup=result; $('newDomainName').value=result?.domain||$('finderInput').value||''; $('newDomainPortfolio').value='Unassigned'; $('newDomainNotes').value=''; $('precheckSummary').classList.toggle('hidden',!result); $('precheckStatus').textContent=result?'Registration data loaded':'Optional, recommended'; if(result) $('precheckSummary').innerHTML=`<b>${esc(result.domain)}</b><br>Expiration: ${prettyDate(result.expiration_date)}<br>Registrar: ${esc(result.registrar_name||'Not disclosed')}<br><span>Only provider-returned data will be saved.</span>`; $('domainDialog').showModal(); }
   async function precheckDomain() { try { $('precheckBtn').disabled=true;$('precheckStatus').textContent='Checking RDAP…'; const result=await rdapLookup($('newDomainName').value);state.addLookup=result;$('precheckSummary').classList.remove('hidden');$('precheckSummary').innerHTML=`<b>${esc(result.domain)}</b><br>Registration: ${prettyDate(result.registration_date)}<br>Expiration: ${prettyDate(result.expiration_date)}<br>Registrar: ${esc(result.registrar_name||'Not disclosed')}<br>Nameservers: ${esc(result.nameservers.join(', ')||'Not disclosed')}`;$('precheckStatus').textContent='Registration data retrieved';toast('RDAP lookup completed. Review the result before saving.','success'); } catch(err) { state.addLookup=null;$('precheckStatus').textContent='Lookup unavailable';toast(err.message,'error'); } finally {$('precheckBtn').disabled=false;} }
   async function saveDomain(e) { e.preventDefault(); const name=validDomain($('newDomainName').value);if(!name)return toast('Enter a valid domain name.','error');if(state.domains.some(d=>d.domain_name.toLowerCase()===name))return toast('This domain is already in your portfolio.','error');const b=$('saveDomainBtn');b.disabled=true;try{let lookup=state.addLookup;if(!lookup || lookup.domain!==name){try{lookup=await rdapLookup(name);}catch{lookup=null;}}const row={owner_id:state.user.id,domain_name:name,tld:name.split('.').pop(),registrar_name:lookup?.registrar_name||null,registration_date:lookup?.registration_date||null,expiration_date:lookup?.expiration_date||null,nameservers:lookup?.nameservers||[],domain_status:(lookup?.status_codes||[]).join(', ')||'unknown',portfolio:$('newDomainPortfolio').value.trim()||'Unassigned',notes:$('newDomainNotes').value.trim()||null,data_source:lookup?.data_source||null,last_checked_at:lookup?new Date().toISOString():null,next_check_at:new Date().toISOString()};const {data,error}=await client.from('domains').insert(row).select().single();if(error)throw error;state.domains.push(data);if(row.portfolio!=='Unassigned'&&!state.portfolios.some(p=>p.name===row.portfolio)){const {data:pdata}=await client.from('portfolios').insert({owner_id:state.user.id,name:row.portfolio}).select().maybeSingle();if(pdata)state.portfolios.push(pdata);} $('domainDialog').close();state.addLookup=null;renderAll();toast(lookup?'Domain saved with available RDAP data.':'Domain saved; registration data is unknown until a successful check.','success');}catch(err){toast(err.message||'Could not save domain.','error');}finally{b.disabled=false;} }
