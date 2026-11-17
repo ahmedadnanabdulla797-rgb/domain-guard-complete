@@ -1,7 +1,15 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
-const dateOnly = (value?: string) => value ? new Date(value).toISOString().slice(0, 10) : null;
+const dateOnly = (value?: string) => {
+  if (!value) return null;
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return null;
+
+  return date.toISOString().slice(0, 10);
+};
 const daysUntil = (value: string) => {
   const today = new Date(); today.setUTCHours(0, 0, 0, 0);
   const expiry = new Date(`${value}T00:00:00.000Z`);
@@ -47,19 +55,78 @@ Deno.serve(async (req) => {
   const errors: string[] = [];
   for (const domain of domains || []) {
     try {
-      const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 12000);
-      let response: Response;
-      try { response = await fetch(`https://rdap.org/domain/${encodeURIComponent(domain.domain_name)}`, { headers: { Accept: 'application/rdap+json, application/json' }, signal: controller.signal }); }
-      finally { clearTimeout(timeout); }
-      if (response.status === 404) throw new Error('RDAP record not found; this is not proof of domain availability.');
-      if (!response.ok) throw new Error(`RDAP provider returned HTTP ${response.status}.`);
-      const data = await response.json();
-      const events = data.events || [];
-      const reg = dateOnly(events.find((e: any) => e.eventAction === 'registration')?.eventDate);
-      const exp = dateOnly(events.find((e: any) => e.eventAction === 'expiration')?.eventDate);
-      const statusCodes = data.status || [];
-      const nameservers = (data.nameservers || []).map((n: any) => n.ldhName).filter(Boolean);
-      const update: Record<string, unknown> = { registrar_name: registrarFromRdap(data) || domain.registrar_name, registration_date: reg || domain.registration_date, expiration_date: exp || domain.expiration_date, nameservers: nameservers.length ? nameservers : domain.nameservers, status_codes: statusCodes, domain_status: statusCodes.join(', ') || 'registered', data_source: 'RDAP', last_checked_at: now, next_check_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), last_check_error: null };
+     const apiKey = Deno.env.get('WHOISJSON_API_KEY');
+
+if (!apiKey) {
+  throw new Error('WHOISJSON_API_KEY is missing in Supabase secrets.');
+}
+
+const lookupUrl = new URL('https://whoisjson.com/api/v1/whois');
+lookupUrl.searchParams.set('domain', domain.domain_name);
+
+const controller = new AbortController();
+const timeout = setTimeout(() => controller.abort(), 20000);
+
+let response: Response;
+
+try {
+  response = await fetch(lookupUrl.toString(), {
+    method: 'GET',
+    headers: {
+      Authorization: `TOKEN=${apiKey}`,
+      Accept: 'application/json',
+    },
+    signal: controller.signal,
+  });
+} finally {
+  clearTimeout(timeout);
+}
+
+if (!response.ok) {
+  throw new Error(`WhoisJSON lookup failed: HTTP ${response.status}.`);
+}
+
+const data = await response.json();
+
+if (!data || typeof data !== 'object' || Array.isArray(data)) {
+  throw new Error('Invalid WhoisJSON response.');
+}
+
+if (data.registered === false) {
+  throw new Error('No registration record found. This does not prove domain availability.');
+}
+
+const reg = data.created ? dateOnly(data.created) : null;
+const exp = data.expires ? dateOnly(data.expires) : null;
+
+const registrarName =
+  typeof data.registrar === 'string'
+    ? data.registrar
+    : data.registrar?.name || null;
+
+const rawNameservers = Array.isArray(data.nameserver)
+  ? data.nameserver
+  : Array.isArray(data.nameservers)
+    ? data.nameservers
+    : [];
+
+const nameservers = rawNameservers
+  .map((item: any) => typeof item === 'string' ? item : item?.name || '')
+  .filter(Boolean);
+
+const statusCodes = Array.isArray(data.status) ? data.status : [];
+      const update: Record<string, unknown> = {
+  registrar_name: registrarName || domain.registrar_name,
+  registration_date: reg || domain.registration_date,
+  expiration_date: exp || domain.expiration_date,
+  nameservers: nameservers.length ? nameservers : domain.nameservers,
+  status_codes: statusCodes,
+  domain_status: statusCodes.join(', ') || domain.domain_status || 'registered',
+  data_source: 'WhoisJSON',
+  last_checked_at: now,
+  next_check_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+  last_check_error: null
+};
       const { error: updateError } = await admin.from('domains').update(update).eq('id', domain.id);
       if (updateError) throw updateError;
       checked++;
