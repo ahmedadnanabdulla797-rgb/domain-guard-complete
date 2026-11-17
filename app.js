@@ -330,7 +330,7 @@ async function refreshSelectedDomains() {
   let failed = 0;
 
   const batchSize = 10;
-  const batchDelay = 30000;
+  const batchDelay = 3500;
 
   try {
     for (let i = 0; i < selected.length; i += batchSize) {
@@ -450,14 +450,9 @@ next_check_at: new Date().toISOString()
         `Completed ${completed} of ${selected.length}...`;
 
       // Wait between batches to reduce API rate-limit errors.
-      if (i + batchSize < selected.length) {
-        button.textContent =
-          `Waiting before next batch (${completed}/${selected.length})...`;
+      if (i + batchSize < selected.length){
+  await new Promise(resolve=>setTimeout(resolve,batchDelay));
 
-        await new Promise(resolve =>
-          setTimeout(resolve, batchDelay)
-        );
-      }
     }
 
     state.selectedDomainIds.clear();
