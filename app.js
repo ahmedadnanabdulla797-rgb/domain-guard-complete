@@ -657,13 +657,17 @@ async function importDomains(e) {
       owner_id: state.user.id,
       domain_name: domain,
       tld: domain.split('.').pop(),
+
       registrar_name: value('registrar_name', 'registrar') || null,
+
       registration_date: dateOnly(
         value('registration_date', 'created_date')
       ) || null,
+
       expiration_date: dateOnly(
         value('expiration_date', 'expiry_date', 'expires')
       ) || null,
+
       nameservers: [],
       domain_status: 'pending',
       portfolio: value('portfolio') || 'Unassigned',
@@ -682,10 +686,17 @@ async function importDomains(e) {
   }
 
   const button = $('importBtn');
+  const originalText = button?.textContent;
 
   if (button) button.disabled = true;
 
+  let imported = 0;
+  let checked = 0;
+  let failed = 0;
+
   try {
+    // STEP 1: Insert domains into Supabase.
+
     const { data, error } = await client
       .from('domains')
       .insert(records)
@@ -693,28 +704,221 @@ async function importDomains(e) {
 
     if (error) throw error;
 
-    state.domains.push(...(data || []));
+    const importedDomains = data || [];
+
+    state.domains.push(...importedDomains);
+
+    imported = importedDomains.length;
+
+    // STEP 2: Automatically look up registration information.
+    // Maximum 10 domains per API request.
+
+    const batchSize = 10;
+
+    for (let i = 0; i < importedDomains.length; i += batchSize) {
+
+      const batch = importedDomains.slice(i, i + batchSize);
+
+      if (button) {
+        button.textContent =
+          `Checking domains ${Math.min(i + batch.length, importedDomains.length)} of ${importedDomains.length}...`;
+      }
+
+      try {
+
+        const { data: lookupData, error: lookupError } =
+          await client.functions.invoke('import-domains', {
+            body: {
+              domains: batch.map(d => d.domain_name)
+            }
+          });
+
+        if (lookupError) throw lookupError;
+
+        if (!lookupData || !Array.isArray(lookupData.results)) {
+          throw new Error('Invalid domain lookup response.');
+        }
+
+        for (const domain of batch) {
+
+          const result = lookupData.results.find(
+            r => r.domain?.toLowerCase() === domain.domain_name.toLowerCase()
+          );
+
+          const now = new Date().toISOString();
+
+          let update = {};
+
+          // No registration record is not proof of availability.
+
+          if (result?.code === 'NO_REGISTRATION_RECORD') {
+
+            update = {
+              domain_status: 'unknown',
+              data_source: 'WhoisJSON',
+              last_check_error: null,
+              last_checked_at: now,
+              next_check_at: new Date(
+                Date.now() + 24 * 60 * 60 * 1000
+              ).toISOString()
+            };
+
+          } else if (result?.ok && result.rdap) {
+
+            try {
+
+              const lookup = parseRdap(
+                result.rdap,
+                domain.domain_name
+              );
+
+              update = {
+                registrar_name:
+                  lookup.registrar_name || domain.registrar_name || null,
+
+                registration_date:
+                  lookup.registration_date || domain.registration_date || null,
+
+                expiration_date:
+                  lookup.expiration_date || domain.expiration_date || null,
+
+                nameservers:
+                  lookup.nameservers?.length
+                    ? lookup.nameservers
+                    : domain.nameservers || [],
+
+                status_codes: lookup.status_codes || [],
+
+                domain_status:
+                  (lookup.status_codes || []).join(', ') || 'registered',
+
+                data_source: 'WhoisJSON',
+
+                last_check_error: null,
+                last_checked_at: now,
+
+                next_check_at: new Date(
+                  Date.now() + 24 * 60 * 60 * 1000
+                ).toISOString()
+              };
+
+            } catch (parseError) {
+
+              console.error(
+                `Could not parse ${domain.domain_name}:`,
+                parseError
+              );
+
+              failed++;
+              continue;
+            }
+
+          } else {
+
+            update = {
+              last_check_error:
+                result?.error || 'Domain lookup failed.',
+
+              last_checked_at: now,
+
+              next_check_at: new Date(
+                Date.now() + 6 * 60 * 60 * 1000
+              ).toISOString()
+            };
+
+            failed++;
+          }
+
+          // STEP 3: Save lookup information to the database.
+
+          try {
+
+            const { data: saved, error: updateError } = await client
+              .from('domains')
+              .update(update)
+              .eq('id', domain.id)
+              .eq('owner_id', state.user.id)
+              .select()
+              .single();
+
+            if (updateError) throw updateError;
+
+            state.domains = state.domains.map(d =>
+              d.id === domain.id ? saved : d
+            );
+
+            if (result?.ok && result.rdap) {
+              checked++;
+            }
+
+          } catch (saveError) {
+
+            console.error(
+              `Could not save ${domain.domain_name}:`,
+              saveError
+            );
+
+            failed++;
+          }
+        }
+
+      } catch (batchError) {
+
+        console.error('CSV lookup batch failed:', batchError);
+
+        failed += batch.length;
+
+        // Keep imported domains even if lookup fails.
+
+        for (const domain of batch) {
+
+          await client
+            .from('domains')
+            .update({
+              last_check_error:
+                batchError.message || 'Domain lookup unavailable.',
+
+              last_checked_at: new Date().toISOString(),
+
+              next_check_at: new Date(
+                Date.now() + 6 * 60 * 60 * 1000
+              ).toISOString()
+            })
+            .eq('id', domain.id)
+            .eq('owner_id', state.user.id);
+        }
+      }
+    }
+
+    // STEP 4: Update the interface.
 
     renderAll();
 
     $('importDialog')?.close();
 
-    if ($('importText')) $('importText').value = '';
+    if ($('importText')) {
+      $('importText').value = '';
+    }
 
     if ($('csvFileName')) {
       $('csvFileName').classList.add('hidden');
     }
 
     toast(
-      `Imported ${(data || []).length} domains. ${skipped} skipped. Use Refresh selected to retrieve registration details.`,
-      'success'
+      `Imported ${imported} domains. ${checked} checked, ${failed} lookup failures, ${skipped} skipped.`,
+      imported ? 'success' : 'error'
     );
 
   } catch (err) {
+
     toast(`Import failed: ${err.message}`, 'error');
 
   } finally {
-    if (button) button.disabled = false;
+
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText || 'Import domains';
+    }
   }
 }
 
