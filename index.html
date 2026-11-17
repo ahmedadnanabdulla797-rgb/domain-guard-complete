@@ -78,39 +78,7 @@
           <div class="page-heading"><div><div class="eyebrow">MONITORING OVERVIEW</div><h1>Good to see you<span class="heading-period">.</span></h1><p class="page-subtitle">Your domain portfolio at a glance.</p></div><div class="heading-actions"><span class="updated-label"><span class="status-dot"></span><span id="updatedLabel">Data sync pending</span></span><button id="refreshBtn" class="btn secondary">↻ Refresh data</button></div></div>
           <div id="setupNotice" class="notice hidden"><strong>Connect your backend to continue</strong><span>Add your Supabase project URL and publishable anon key in <code>config.js</code>, then run the included SQL migration. Until then, data-changing actions are disabled.</span></div>
           <div class="metric-grid">
-                      <!-- Domain Scan -->
-          <section class="panel finder-panel" style="margin-bottom:20px;">
-            <div class="panel-head">
-              <div>
-                <h2>Domain Scan</h2>
-                <p>Scan any domain to retrieve its public registration information.</p>
-              </div>
-              <span class="badge neutral">RDAP LOOKUP</span>
-            </div>
-
-            <form id="overviewScanForm" class="finder-form">
-              <label for="overviewScanInput">Enter domain name</label>
-              <div class="finder-input-row">
-                <input
-                  id="overviewScanInput"
-                  type="text"
-                  placeholder="example.com"
-                  required
-                  autocomplete="off"
-                >
-                <button id="overviewScanBtn" class="btn primary" type="submit">
-                  Scan Domain →
-                </button>
-              </div>
-              <p class="field-help">
-                Retrieve registrar, registration date, expiration date,
-                domain status and nameservers.
-              </p>
-            </form>
-
-            <div id="overviewScanResult" class="finder-result hidden"></div>
-          </section>
-          <!-- End Domain Scan -->
+                     
             <article class="metric-card"><div class="metric-top"><span>Total domains</span><span class="metric-icon blue">◈</span></div><div id="metricTotal" class="metric-value">—</div><div class="metric-foot">In your workspace</div></article>
             <article class="metric-card"><div class="metric-top"><span>Expiring in 7 days</span><span class="metric-icon red">!</span></div><div id="metric7" class="metric-value">—</div><div class="metric-foot">Immediate attention</div></article>
             <article class="metric-card"><div class="metric-top"><span>Expiring in 30 days</span><span class="metric-icon amber">◷</span></div><div id="metric30" class="metric-value">—</div><div class="metric-foot">Plan renewals early</div></article>
