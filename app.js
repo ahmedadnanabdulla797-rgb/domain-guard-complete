@@ -330,7 +330,7 @@ async function refreshSelectedDomains() {
   let failed = 0;
 
   const batchSize = 10;
-  const batchDelay = 3500;
+  
 
   try {
     for (let i = 0; i < selected.length; i += batchSize) {
@@ -448,11 +448,7 @@ async function refreshSelectedDomains() {
         `Completed ${completed} of ${selected.length}...`;
 
       // Pause between batches without displaying a waiting message.
-      if (i + batchSize < selected.length) {
-        await new Promise(resolve =>
-          setTimeout(resolve, batchDelay)
-        );
-      }
+     
     } // This closes the FOR loop correctly.
 
     state.selectedDomainIds.clear();
