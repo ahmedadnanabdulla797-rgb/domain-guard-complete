@@ -667,12 +667,18 @@ async function refreshSelectedDomains() {
 
 renderAll();
 
-    toast(
-      `Refresh complete: ${updated} updated, ${noRecord} without registration records, ${postponed} postponed, ${failed} failed.`,
-      updated > 0 || noRecord > 0 ? 'success' : 'error'
-    );
+   if (stopProcessing) {
+  toast(
+    `⚠️ WHOISJSON API LIMIT REACHED! ${postponed} domains postponed. Please update your API key.`,
+    'error'
+  );
+} else {
+  toast(
+    `Refresh complete: ${updated} updated, ${noRecord} without registration records, ${postponed} postponed, ${failed} failed.`,
+    updated > 0 || noRecord > 0 ? 'success' : 'error'
+  );
 
-  } catch (err) {
+   } catch (err) {
     console.error('Bulk refresh error:', err);
 
     toast(
@@ -1226,12 +1232,18 @@ async function importDomains(e) {
       $('csvFileName').classList.add('hidden');
     }
 
-    toast(
-      `Imported ${imported} domains. ${checked} checked, ${noRecord} without registration records, ${failed} lookup failures, ${postponed} postponed, ${skipped} skipped.`,
-      'success'
-    );
-
-  } catch (err) {
+    if (stopProcessing) {
+  toast(
+    `⚠️ WHOISJSON API LIMIT REACHED! ${postponed} domains postponed. Please update your API key.`,
+    'error'
+  );
+} else {
+  toast(
+    `Imported ${imported} domains. ${checked} checked, ${noRecord} without registration records, ${failed} lookup failures, ${postponed} postponed, ${skipped} skipped.`,
+    'success'
+  );
+}
+      catch (err) {
 
     console.error('CSV import failed:', err);
 
