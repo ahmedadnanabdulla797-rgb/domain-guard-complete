@@ -324,25 +324,89 @@ async function refreshSelectedDomains() {
   }
 
   const button = $('refreshSelectedDomains');
-  button.disabled = true;
+  const originalText = button?.textContent;
+
+  if (button) button.disabled = true;
 
   let updated = 0;
+  let noRecord = 0;
   let failed = 0;
   let postponed = 0;
 
   const batchSize = 10;
+
+  const now = () => new Date().toISOString();
+
+  const hoursFromNow = hours =>
+    new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+
+  const getRetryTime = seconds => {
+    const value = Number(seconds);
+
+    return new Date(
+      Date.now() +
+      (Number.isFinite(value) && value >= 60 ? value : 172800) * 1000
+    ).toISOString();
+  };
+
+  // Save updates to the database and local state.
+
+  const saveDomain = async (domain, changes) => {
+    const { data: saved, error } = await client
+      .from('domains')
+      .update(changes)
+      .eq('id', domain.id)
+      .eq('owner_id', state.user.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    state.domains = state.domains.map(d =>
+      d.id === domain.id ? saved : d
+    );
+
+    return saved;
+  };
 
   try {
     let stopProcessing = false;
     let retryAt = null;
 
     for (let i = 0; i < selected.length; i += batchSize) {
-      if (stopProcessing) break;
 
       const batch = selected.slice(i, i + batchSize);
 
-      button.textContent =
-        `Checking ${Math.min(i + batch.length, selected.length)} of ${selected.length}...`;
+      // If rate limited, postpone all remaining domains.
+
+      if (stopProcessing) {
+        for (const domain of batch) {
+          try {
+            await saveDomain(domain, {
+              last_check_error:
+                'Lookup postponed because the API rate limit was reached.',
+              next_check_at: retryAt
+            });
+
+            postponed++;
+
+          } catch (err) {
+            console.error(
+              `Could not postpone ${domain.domain_name}:`,
+              err
+            );
+
+            failed++;
+          }
+        }
+
+        continue;
+      }
+
+      if (button) {
+        button.textContent =
+          `Checking ${Math.min(i + batch.length, selected.length)} of ${selected.length}...`;
+      }
 
       try {
         const { data, error } = await client.functions.invoke(
@@ -360,165 +424,204 @@ async function refreshSelectedDomains() {
           throw new Error('Invalid lookup response.');
         }
 
-        // Detect rate limiting before processing individual results.
+        // Detect API rate limits before processing results.
+
         const rateLimitedResult = data.results.find(
           r => r.code === 'RATE_LIMITED'
         );
 
         if (rateLimitedResult) {
-          const retrySeconds = Math.max(
-            60,
-            Number(rateLimitedResult.retry_after_seconds) || 172800
+          retryAt = getRetryTime(
+            rateLimitedResult.retry_after_seconds
           );
-
-          retryAt = new Date(
-            Date.now() + retrySeconds * 1000
-          ).toISOString();
 
           stopProcessing = true;
 
           console.warn(
-            'WHOISJSON rate limit reached. Remaining lookups postponed until:',
+            'API rate limit reached. Retry after:',
             retryAt
           );
         }
 
         for (const domain of batch) {
+
           const result = data.results.find(
-            r => r.domain?.toLowerCase() ===
+            r =>
+              r.domain?.toLowerCase() ===
               domain.domain_name.toLowerCase()
           );
 
-          // Handle rate-limited domains separately.
-          if (result?.code === 'RATE_LIMITED') {
-            postponed++;
+          // 1. RATE LIMITED
 
-            await client
-              .from('domains')
-              .update({
+          if (
+            result?.code === 'RATE_LIMITED' ||
+            (stopProcessing && !result)
+          ) {
+            try {
+              await saveDomain(domain, {
+                last_check_error:
+                  'Lookup postponed because the API rate limit was reached.',
                 next_check_at: retryAt
-              })
-              .eq('id', domain.id)
-              .eq('owner_id', state.user.id);
+              });
+
+              postponed++;
+
+            } catch (err) {
+              console.error(
+                `Could not postpone ${domain.domain_name}:`,
+                err
+              );
+
+              failed++;
+            }
 
             continue;
           }
 
-          // If rate limiting stopped this batch,
-          // postpone all remaining domains in it.
-          if (stopProcessing && !result?.ok) {
-            postponed++;
+          // 2. NO REGISTRATION RECORD
+          // This does NOT mean the domain is available.
 
-            await client
-              .from('domains')
-              .update({
-                next_check_at: retryAt
-              })
-              .eq('id', domain.id)
-              .eq('owner_id', state.user.id);
+          if (result?.code === 'NO_REGISTRATION_RECORD') {
+            try {
+              await saveDomain(domain, {
+                domain_status: 'unknown',
+                data_source: 'WhoisJSON',
+                last_check_error: null,
+                last_checked_at: now(),
+                next_check_at: hoursFromNow(24)
+              });
+
+              noRecord++;
+
+            } catch (err) {
+              console.error(
+                `Could not save ${domain.domain_name}:`,
+                err
+              );
+
+              failed++;
+            }
 
             continue;
           }
 
-          if (!result?.ok || !result.rdap) {
-            console.warn(
-              `Lookup unavailable: ${domain.domain_name}`,
-              result?.error
-            );
+          // 3. SUCCESSFUL LOOKUP
 
-            failed++;
+          if (result?.ok && result.rdap) {
+            try {
+              const lookup = parseRdap(
+                result.rdap,
+                domain.domain_name
+              );
+
+              const { status_codes = [] } = lookup;
+
+              const changes = {
+                registrar_name:
+                  lookup.registrar_name ||
+                  domain.registrar_name ||
+                  null,
+
+                registration_date:
+                  lookup.registration_date ||
+                  domain.registration_date ||
+                  null,
+
+                expiration_date:
+                  lookup.expiration_date ||
+                  domain.expiration_date ||
+                  null,
+
+                nameservers:
+                  lookup.nameservers?.length
+                    ? lookup.nameservers
+                    : domain.nameservers || [],
+
+                status_codes,
+
+                domain_status:
+                  status_codes.join(', ') ||
+                  'registered',
+
+                data_source: 'WhoisJSON',
+
+                last_check_error: null,
+                last_checked_at: now(),
+
+                // Schedule next check after 24 hours.
+                next_check_at: hoursFromNow(24)
+              };
+
+              await saveDomain(domain, changes);
+
+              updated++;
+
+            } catch (err) {
+              console.error(
+                `Could not process ${domain.domain_name}:`,
+                err
+              );
+
+              try {
+                await saveDomain(domain, {
+                  last_check_error:
+                    'Could not process registration data.',
+                  last_checked_at: now(),
+                  next_check_at: hoursFromNow(6)
+                });
+              } catch (saveErr) {
+                console.error(saveErr);
+              }
+
+              failed++;
+            }
+
             continue;
           }
+
+          // 4. OTHER LOOKUP FAILURES
 
           try {
-            const lookup = parseRdap(
-              result.rdap,
-              domain.domain_name
-            );
+            await saveDomain(domain, {
+              last_check_error:
+                result?.error || 'Domain lookup failed.',
 
-            const { data: saved, error: updateError } =
-              await client
-                .from('domains')
-                .update({
-                  registrar_name:
-                    lookup.registrar_name ||
-                    domain.registrar_name ||
-                    null,
-
-                  registration_date:
-                    lookup.registration_date ||
-                    domain.registration_date ||
-                    null,
-
-                  expiration_date:
-                    lookup.expiration_date ||
-                    domain.expiration_date ||
-                    null,
-
-                  nameservers:
-                    lookup.nameservers?.length
-                      ? lookup.nameservers
-                      : domain.nameservers || [],
-
-                  domain_status:
-                    (lookup.status_codes || []).join(', ') ||
-                    domain.domain_status ||
-                    'unknown',
-
-                  data_source:
-                    lookup.data_source || 'WhoisJSON API',
-
-                  last_check_error: null,
-                  last_checked_at: new Date().toISOString(),
-                  next_check_at: new Date().toISOString()
-                })
-                .eq('id', domain.id)
-                .eq('owner_id', state.user.id)
-                .select()
-                .single();
-
-            if (updateError) throw updateError;
-
-            state.domains = state.domains.map(d =>
-              d.id === domain.id ? saved : d
-            );
-
-            updated++;
+              last_checked_at: now(),
+              next_check_at: hoursFromNow(6)
+            });
 
           } catch (err) {
             console.error(
-              `Saving failed for ${domain.domain_name}:`,
+              `Could not save failure for ${domain.domain_name}:`,
               err
             );
-
-            failed++;
           }
+
+          failed++;
         }
 
-        // If rate limited, postpone domains in all remaining batches.
+        // Stop further API calls after a rate limit.
+
         if (stopProcessing) {
           const remaining = selected.slice(i + batch.length);
 
-          if (remaining.length) {
-            const remainingIds = remaining.map(d => d.id);
-
-            const { error: scheduleError } = await client
-              .from('domains')
-              .update({
+          for (const domain of remaining) {
+            try {
+              await saveDomain(domain, {
+                last_check_error:
+                  'Lookup postponed because the API rate limit was reached.',
                 next_check_at: retryAt
-              })
-              .in('id', remainingIds)
-              .eq('owner_id', state.user.id);
+              });
 
-            if (scheduleError) {
+              postponed++;
+
+            } catch (err) {
               console.error(
-                'Could not schedule remaining domains:',
-                scheduleError
+                `Could not postpone ${domain.domain_name}:`,
+                err
               );
 
-              failed += remaining.length;
-            } else {
-              postponed += remaining.length;
+              failed++;
             }
           }
 
@@ -528,39 +631,47 @@ async function refreshSelectedDomains() {
       } catch (err) {
         console.error('Batch lookup failed:', err);
 
-        failed += batch.length;
+        // Save retry information for every domain in this batch.
+
+        for (const domain of batch) {
+          try {
+            await saveDomain(domain, {
+              last_check_error:
+                err.message || 'Domain lookup unavailable.',
+              last_checked_at: now(),
+              next_check_at: hoursFromNow(6)
+            });
+
+            failed++;
+
+          } catch (saveErr) {
+            console.error(
+              `Could not save ${domain.domain_name}:`,
+              saveErr
+            );
+
+            failed++;
+          }
+        }
       }
 
-      const completed = Math.min(
-        i + batch.length,
-        selected.length
-      );
-
-      button.textContent =
-        `Completed ${completed} of ${selected.length}...`;
+      if (button) {
+        button.textContent =
+          `Completed ${Math.min(i + batch.length, selected.length)} of ${selected.length}...`;
+      }
     }
+
+    // Refresh the domain list and dashboard.
 
     state.selectedDomainIds.clear();
 
     await loadDomains();
     renderAll();
 
-    if (postponed > 0) {
-      const retryDate = retryAt
-        ? new Date(retryAt).toLocaleString()
-        : 'later';
-
-      toast(
-        `Refresh: ${updated} updated, ${postponed} postponed, ${failed} failed. Retry after ${retryDate}.`,
-        updated > 0 ? 'success' : 'error'
-      );
-
-    } else {
-      toast(
-        `Refresh complete: ${updated} updated, ${failed} failed.`,
-        updated > 0 ? 'success' : 'error'
-      );
-    }
+    toast(
+      `Refresh complete: ${updated} updated, ${noRecord} without registration records, ${postponed} postponed, ${failed} failed.`,
+      updated > 0 || noRecord > 0 ? 'success' : 'error'
+    );
 
   } catch (err) {
     console.error('Bulk refresh error:', err);
@@ -571,8 +682,10 @@ async function refreshSelectedDomains() {
     );
 
   } finally {
-    button.disabled = false;
-    button.textContent = '↻ Refresh selected';
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText || '↻ Refresh selected';
+    }
   }
 }
 // CSV FILE UPLOAD AND DRAG & DROP
