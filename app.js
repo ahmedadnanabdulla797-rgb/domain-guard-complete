@@ -677,7 +677,7 @@ renderAll();
     `Refresh complete: ${updated} updated, ${noRecord} without registration records, ${postponed} postponed, ${failed} failed.`,
     updated > 0 || noRecord > 0 ? 'success' : 'error'
   );
-
+ }
    } catch (err) {
     console.error('Bulk refresh error:', err);
 
@@ -1243,7 +1243,7 @@ async function importDomains(e) {
     'success'
   );
 }
-      catch (err) {
+  } catch (err) {
 
     console.error('CSV import failed:', err);
 
