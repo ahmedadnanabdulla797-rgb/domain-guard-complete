@@ -46,25 +46,33 @@ async function lookupDomain(domain: string) {
     });
 
     if (!response.ok) {
-      const errorMessages: Record<number, string> = {
-        400: "Invalid domain or lookup request.",
-        401: "WhoisJSON API key is invalid.",
-        403: "WhoisJSON account access is restricted. Check your account.",
-        404: "No registration record was found. This does not prove availability.",
-        429: "WhoisJSON request limit reached. Try again later.",
-        500: "WhoisJSON service is temporarily unavailable.",
-        502: "WhoisJSON service is temporarily unavailable.",
-        503: "WhoisJSON service is temporarily unavailable.",
-      };
+  const errorMessages: Record<number, string> = {
+    400: "Invalid domain or lookup request.",
+    401: "WhoisJSON API key is invalid.",
+    403: "WhoisJSON account access is restricted. Check your account.",
+    404: "No registration record was found. This does not prove availability.",
+    429: "WhoisJSON rate limit reached. Try again later.",
+    500: "WhoisJSON service is temporarily unavailable.",
+    502: "WhoisJSON service is temporarily unavailable.",
+    503: "WhoisJSON service is temporarily unavailable.",
+  };
 
-      return {
-        domain,
-        ok: false,
-        status: response.status,
-        error:
-          errorMessages[response.status] ||
-          `WhoisJSON lookup failed (${response.status}).`,
-      };
+  const retryAfterHeader = response.headers.get("Retry-After");
+  const retryAfterSeconds = retryAfterHeader
+    ? Math.max(0, Number(retryAfterHeader) || 0)
+    : 172800;
+
+  return {
+    domain,
+    ok: false,
+    status: response.status,
+    code: response.status === 429 ? "RATE_LIMITED" : "LOOKUP_FAILED",
+    retry_after_seconds: retryAfterSeconds,
+    error:
+      errorMessages[response.status] ||
+      `WhoisJSON lookup failed (${response.status}).`,
+  };
+}
     }
 
     const data = await response.json();
