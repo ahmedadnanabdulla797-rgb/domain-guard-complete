@@ -20,7 +20,18 @@ function jsonResponse(data: unknown, status = 200) {
 const sleep = (ms: number) =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-async function lookupDomain(domain: string) {
+type LookupResult = {
+  domain: string;
+  ok: boolean;
+  status: number;
+  code?: string;
+  retry_after_seconds?: number;
+  error?: string;
+  rdap?: unknown;
+  data_source?: string;
+};
+
+async function lookupDomain(domain: string): Promise<LookupResult> {
   const apiKey = Deno.env.get("WHOISJSON_API_KEY");
 
   if (!apiKey) {
@@ -28,6 +39,7 @@ async function lookupDomain(domain: string) {
       domain,
       ok: false,
       status: 500,
+      code: "CONFIGURATION_ERROR",
       error: "WHOISJSON_API_KEY is missing in Supabase secrets.",
     };
   }
@@ -45,39 +57,59 @@ async function lookupDomain(domain: string) {
       signal: AbortSignal.timeout(20000),
     });
 
+    // Handle provider errors.
     if (!response.ok) {
-  const errorMessages: Record<number, string> = {
-    400: "Invalid domain or lookup request.",
-    401: "WhoisJSON API key is invalid.",
-    403: "WhoisJSON account access is restricted. Check your account.",
-    404: "No registration record was found. This does not prove availability.",
-    429: "WhoisJSON rate limit reached. Try again later.",
-    500: "WhoisJSON service is temporarily unavailable.",
-    502: "WhoisJSON service is temporarily unavailable.",
-    503: "WhoisJSON service is temporarily unavailable.",
-  };
+      const errorMessages: Record<number, string> = {
+        400: "Invalid domain or lookup request.",
+        401: "WhoisJSON API key is invalid.",
+        403: "WhoisJSON account access is restricted. Check your account.",
+        404: "No registration record was found. This does not prove availability.",
+        429: "WhoisJSON rate limit reached. Try again later.",
+        500: "WhoisJSON service is temporarily unavailable.",
+        502: "WhoisJSON service is temporarily unavailable.",
+        503: "WhoisJSON service is temporarily unavailable.",
+      };
 
-  const retryAfterHeader = response.headers.get("Retry-After");
-  const retryAfterSeconds = retryAfterHeader
-    ? Math.max(0, Number(retryAfterHeader) || 0)
-    : 172800;
+      // Default retry period: 48 hours.
+      let retryAfterSeconds = 172800;
 
-  return {
-    domain,
-    ok: false,
-    status: response.status,
-    code: response.status === 429 ? "RATE_LIMITED" : "LOOKUP_FAILED",
-    retry_after_seconds: retryAfterSeconds,
-    error:
-      errorMessages[response.status] ||
-      `WhoisJSON lookup failed (${response.status}).`,
-  };
-}
+      const retryAfterHeader = response.headers.get("Retry-After");
+
+      if (retryAfterHeader) {
+        const numericValue = Number(retryAfterHeader);
+
+        if (Number.isFinite(numericValue) && numericValue > 0) {
+          retryAfterSeconds = Math.ceil(numericValue);
+        } else {
+          const retryDate = Date.parse(retryAfterHeader);
+
+          if (!Number.isNaN(retryDate)) {
+            retryAfterSeconds = Math.max(
+              0,
+              Math.ceil((retryDate - Date.now()) / 1000),
+            );
+          }
+        }
+      }
+
+      return {
+        domain,
+        ok: false,
+        status: response.status,
+        code:
+          response.status === 429
+            ? "RATE_LIMITED"
+            : "LOOKUP_FAILED",
+        retry_after_seconds: retryAfterSeconds,
+        error:
+          errorMessages[response.status] ||
+          `WhoisJSON lookup failed (${response.status}).`,
+      };
     }
 
     const data = await response.json();
 
-    // Validate the API response before using it.
+    // Validate the API response.
     if (
       !data ||
       typeof data !== "object" ||
@@ -86,7 +118,7 @@ async function lookupDomain(domain: string) {
       throw new Error("Invalid WHOISJSON response.");
     }
 
-    // Diagnostic information for Supabase Edge Function logs.
+    // Diagnostic information for Supabase logs.
     console.log("WHOISJSON diagnostic:", {
       domain,
       registered: data.registered,
@@ -100,18 +132,17 @@ async function lookupDomain(domain: string) {
       responseFields: Object.keys(data),
     });
 
-    // A missing registration record is not proof of availability.
-  
+    // No registration record does not prove availability.
     if (data.registered === false) {
-  return {
-    domain,
-    ok: false,
-    status: 404,
-    code: "NO_REGISTRATION_RECORD",
-    error:
-      "No registration record was returned by the lookup provider. This does not prove availability.",
-  };
-}
+      return {
+        domain,
+        ok: false,
+        status: 404,
+        code: "NO_REGISTRATION_RECORD",
+        error:
+          "No registration record was returned by the lookup provider. This does not prove availability.",
+      };
+    }
 
     const registrarName =
       typeof data.registrar === "string"
@@ -126,7 +157,9 @@ async function lookupDomain(domain: string) {
 
     const nameservers = rawNameservers
       .map((item: unknown) => {
-        if (typeof item === "string") return item;
+        if (typeof item === "string") {
+          return item;
+        }
 
         if (
           item &&
@@ -141,8 +174,7 @@ async function lookupDomain(domain: string) {
       })
       .filter((name: string) => name.length > 0);
 
-    // Convert WHOISJSON response into the RDAP-style
-    // structure already used by DomainGuard.
+    // Convert WHOISJSON response into RDAP-compatible structure.
     const rdap = {
       name: data.name || domain,
 
@@ -204,6 +236,7 @@ async function lookupDomain(domain: string) {
       domain,
       ok: false,
       status: 0,
+      code: "NETWORK_ERROR",
       error:
         error instanceof Error
           ? error.message
@@ -222,7 +255,7 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") {
     return jsonResponse(
       { error: "Method not allowed." },
-      405
+      405,
     );
   }
 
@@ -237,7 +270,7 @@ Deno.serve(async (req) => {
           error:
             "Missing Supabase configuration or authentication.",
         },
-        401
+        401,
       );
     }
 
@@ -250,7 +283,7 @@ Deno.serve(async (req) => {
             Authorization: authorization,
           },
         },
-      }
+      },
     );
 
     const {
@@ -263,7 +296,7 @@ Deno.serve(async (req) => {
         {
           error: "Please sign in before importing domains.",
         },
-        401
+        401,
       );
     }
 
@@ -275,7 +308,7 @@ Deno.serve(async (req) => {
         {
           error: "Provide a non-empty domains array.",
         },
-        400
+        400,
       );
     }
 
@@ -285,21 +318,21 @@ Deno.serve(async (req) => {
           error:
             "Maximum 10 domains per request. Split the import into smaller batches.",
         },
-        400
+        400,
       );
     }
 
-    const results = [];
+    const results: LookupResult[] = [];
 
     for (let i = 0; i < domains.length; i++) {
       const domain = String(domains[i] || "")
         .trim()
         .toLowerCase();
 
-      // Correct domain validation regex.
+      // Validate domain name.
       const valid =
         /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i.test(
-          domain
+          domain,
         );
 
       if (!valid) {
@@ -307,15 +340,42 @@ Deno.serve(async (req) => {
           domain,
           ok: false,
           status: 400,
+          code: "INVALID_DOMAIN",
           error: "Invalid domain name.",
         });
 
         continue;
       }
 
-      results.push(await lookupDomain(domain));
+      const result = await lookupDomain(domain);
 
-      // Wait between API requests to reduce rate-limit errors.
+      results.push(result);
+
+      // Stop all further requests when the rate limit is reached.
+      if (result.code === "RATE_LIMITED") {
+        console.warn(
+          "WHOISJSON rate limit reached. Remaining lookups postponed.",
+        );
+
+        for (let j = i + 1; j < domains.length; j++) {
+          results.push({
+            domain: String(domains[j] || "")
+              .trim()
+              .toLowerCase(),
+            ok: false,
+            status: 429,
+            code: "RATE_LIMITED",
+            retry_after_seconds:
+              result.retry_after_seconds || 172800,
+            error:
+              "Lookup postponed because the WHOISJSON rate limit was reached.",
+          });
+        }
+
+        break;
+      }
+
+      // Wait between requests to reduce provider rate limits.
       if (i < domains.length - 1) {
         await sleep(3500);
       }
@@ -325,6 +385,9 @@ Deno.serve(async (req) => {
       success: true,
       requested: domains.length,
       successful: results.filter((item) => item.ok).length,
+      rate_limited: results.filter(
+        (item) => item.code === "RATE_LIMITED",
+      ).length,
       results,
     });
 
@@ -338,7 +401,7 @@ Deno.serve(async (req) => {
             ? error.message
             : "Unexpected server error.",
       },
-      500
+      500,
     );
   }
 });
