@@ -663,10 +663,9 @@ async function refreshSelectedDomains() {
 
     // Refresh the domain list and dashboard.
 
-    state.selectedDomainIds.clear();
+ state.selectedDomainIds.clear();
 
-    await loadDomains();
-    renderAll();
+renderAll();
 
     toast(
       `Refresh complete: ${updated} updated, ${noRecord} without registration records, ${postponed} postponed, ${failed} failed.`,
