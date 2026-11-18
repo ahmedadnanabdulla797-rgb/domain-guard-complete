@@ -91,7 +91,13 @@
                 <div class="domain-cell">
                   <div class="domain-favicon">${esc(initial(d.domain_name))}</div>
                   <div>
-                    <strong>${esc(d.domain_name)}</strong>
+                    <button
+  type="button"
+  data-view-domain="${esc(d.id)}"
+  style="background:none;border:0;padding:0;color:var(--accent);font:inherit;font-weight:700;cursor:pointer;text-align:left;"
+>
+  ${esc(d.domain_name)}
+</button>
                     <small>${esc(d.portfolio || 'Unassigned')} · ${esc(d.registrar_name || 'Registrar unknown')}</small>
                   </div>
                 </div>
