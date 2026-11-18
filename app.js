@@ -1702,6 +1702,18 @@ function bindEvents() {  $('authForm').addEventListener('submit', handleAuthSubm
     );
 
     document.body.addEventListener('click', e => {
+      const view = e.target.closest('[data-view-domain]');
+
+if (view) {
+  const domain = state.domains.find(
+    d => String(d.id) === String(view.dataset.viewDomain)
+  );
+
+  if (domain) {
+    showSavedDomainDetails(domain);
+  }
+}
+      
       const del = e.target.closest('[data-delete-domain]');
 
       if (del) {
