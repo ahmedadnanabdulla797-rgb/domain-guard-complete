@@ -328,12 +328,17 @@ async function refreshSelectedDomains() {
 
   let updated = 0;
   let failed = 0;
+  let postponed = 0;
 
   const batchSize = 10;
-  
 
   try {
+    let stopProcessing = false;
+    let retryAt = null;
+
     for (let i = 0; i < selected.length; i += batchSize) {
+      if (stopProcessing) break;
+
       const batch = selected.slice(i, i + batchSize);
 
       button.textContent =
@@ -355,17 +360,72 @@ async function refreshSelectedDomains() {
           throw new Error('Invalid lookup response.');
         }
 
+        // Detect rate limiting before processing individual results.
+        const rateLimitedResult = data.results.find(
+          r => r.code === 'RATE_LIMITED'
+        );
+
+        if (rateLimitedResult) {
+          const retrySeconds = Math.max(
+            60,
+            Number(rateLimitedResult.retry_after_seconds) || 172800
+          );
+
+          retryAt = new Date(
+            Date.now() + retrySeconds * 1000
+          ).toISOString();
+
+          stopProcessing = true;
+
+          console.warn(
+            'WHOISJSON rate limit reached. Remaining lookups postponed until:',
+            retryAt
+          );
+        }
+
         for (const domain of batch) {
           const result = data.results.find(
             r => r.domain?.toLowerCase() ===
               domain.domain_name.toLowerCase()
           );
 
+          // Handle rate-limited domains separately.
+          if (result?.code === 'RATE_LIMITED') {
+            postponed++;
+
+            await client
+              .from('domains')
+              .update({
+                next_check_at: retryAt
+              })
+              .eq('id', domain.id)
+              .eq('owner_id', state.user.id);
+
+            continue;
+          }
+
+          // If rate limiting stopped this batch,
+          // postpone all remaining domains in it.
+          if (stopProcessing && !result?.ok) {
+            postponed++;
+
+            await client
+              .from('domains')
+              .update({
+                next_check_at: retryAt
+              })
+              .eq('id', domain.id)
+              .eq('owner_id', state.user.id);
+
+            continue;
+          }
+
           if (!result?.ok || !result.rdap) {
             console.warn(
               `Lookup unavailable: ${domain.domain_name}`,
               result?.error
             );
+
             failed++;
             continue;
           }
@@ -430,12 +490,44 @@ async function refreshSelectedDomains() {
               `Saving failed for ${domain.domain_name}:`,
               err
             );
+
             failed++;
           }
         }
 
+        // If rate limited, postpone domains in all remaining batches.
+        if (stopProcessing) {
+          const remaining = selected.slice(i + batch.length);
+
+          if (remaining.length) {
+            const remainingIds = remaining.map(d => d.id);
+
+            const { error: scheduleError } = await client
+              .from('domains')
+              .update({
+                next_check_at: retryAt
+              })
+              .in('id', remainingIds)
+              .eq('owner_id', state.user.id);
+
+            if (scheduleError) {
+              console.error(
+                'Could not schedule remaining domains:',
+                scheduleError
+              );
+
+              failed += remaining.length;
+            } else {
+              postponed += remaining.length;
+            }
+          }
+
+          break;
+        }
+
       } catch (err) {
         console.error('Batch lookup failed:', err);
+
         failed += batch.length;
       }
 
@@ -446,18 +538,29 @@ async function refreshSelectedDomains() {
 
       button.textContent =
         `Completed ${completed} of ${selected.length}...`;
-
-      // Pause between batches without displaying a waiting message.
-     
-    } // This closes the FOR loop correctly.
+    }
 
     state.selectedDomainIds.clear();
+
+    await loadDomains();
     renderAll();
 
-    toast(
-      `Refresh complete: ${updated} updated, ${failed} failed.`,
-      updated ? 'success' : 'error'
-    );
+    if (postponed > 0) {
+      const retryDate = retryAt
+        ? new Date(retryAt).toLocaleString()
+        : 'later';
+
+      toast(
+        `Refresh: ${updated} updated, ${postponed} postponed, ${failed} failed. Retry after ${retryDate}.`,
+        updated > 0 ? 'success' : 'error'
+      );
+
+    } else {
+      toast(
+        `Refresh complete: ${updated} updated, ${failed} failed.`,
+        updated > 0 ? 'success' : 'error'
+      );
+    }
 
   } catch (err) {
     console.error('Bulk refresh error:', err);
@@ -472,7 +575,6 @@ async function refreshSelectedDomains() {
     button.textContent = '↻ Refresh selected';
   }
 }
-
 // CSV FILE UPLOAD AND DRAG & DROP
 // =====================================
 
