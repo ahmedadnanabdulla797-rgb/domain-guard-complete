@@ -126,6 +126,81 @@
     </table>
   `;
 }
+function showSavedDomainDetails(domain) {
+  if (!domain) return;
+
+  const nameservers = Array.isArray(domain.nameservers)
+    ? domain.nameservers
+    : [];
+
+  const statusCodes = Array.isArray(domain.domain_status)
+    ? domain.domain_status
+    : (domain.domain_status || '').split(',').filter(Boolean);
+
+  $('detailsDomainName').textContent = domain.domain_name;
+
+  $('domainDetailsContent').innerHTML = `
+    <div class="result-banner">
+      <div>
+        <h2>${esc(domain.domain_name)}</h2>
+        <p>Saved domain · ${esc(domain.data_source || 'Registration data not available')}</p>
+      </div>
+      ${badge(statusFor(domain))}
+    </div>
+
+    <div class="result-grid">
+      <div class="result-field">
+        <span>Registration date</span>
+        <strong>${prettyDate(domain.registration_date)}</strong>
+      </div>
+
+      <div class="result-field">
+        <span>Expiration date</span>
+        <strong>${prettyDate(domain.expiration_date)}</strong>
+      </div>
+
+      <div class="result-field">
+        <span>Time remaining</span>
+        <strong>${domain.expiration_date ? esc(daysText(domain)) : 'Unknown'}</strong>
+      </div>
+
+      <div class="result-field">
+        <span>Registrar</span>
+        <strong>${esc(domain.registrar_name || 'Not disclosed')}</strong>
+      </div>
+
+      <div class="result-field">
+        <span>Portfolio</span>
+        <strong>${esc(domain.portfolio || 'Unassigned')}</strong>
+      </div>
+
+      <div class="result-field">
+        <span>Last checked</span>
+        <strong>${domain.last_checked_at ? esc(new Date(domain.last_checked_at).toLocaleString()) : 'Never checked'}</strong>
+      </div>
+
+      <div class="result-field">
+        <span>Domain status</span>
+        <strong>${esc(statusCodes.join(', ') || 'Not disclosed')}</strong>
+      </div>
+
+      <div class="result-field">
+        <span>Nameservers</span>
+        <strong>${esc(nameservers.join(', ') || 'Not disclosed')}</strong>
+      </div>
+    </div>
+
+    <div class="result-detail">
+      <h3>Additional information</h3>
+      <p><strong>Data source:</strong> ${esc(domain.data_source || 'Unknown')}</p>
+      <p><strong>Notes:</strong> ${esc(domain.notes || 'No notes added')}</p>
+      <p><strong>Domain ID:</strong> ${esc(domain.id)}</p>
+    </div>
+  `;
+
+  $('domainDetailsDialog').showModal();
+}
+  
 function renderDomains() {
   const q = ($('domainSearch')?.value || $('globalSearch')?.value || '').toLowerCase().trim();
   const status = $('statusFilter')?.value || 'all';
