@@ -1,4 +1,3 @@
-```typescript
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const json = (
@@ -26,26 +25,13 @@ const daysUntil = (value: string) => {
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
 
-  const expiry = new Date(`${value}T00:00:00.000Z`);
+  // Fixed: use string concatenation instead of a template literal.
+  const expiry = new Date(value + 'T00:00:00.000Z');
 
   return Math.ceil(
     (expiry.getTime() - today.getTime()) / 86400000
   );
 };
-
-function registrarFromRdap(data: any) {
-  const entity = (data.entities || []).find(
-    (e: any) => (e.roles || []).includes('registrar')
-  );
-
-  const vcard = entity?.vcardArray?.[1] || [];
-
-  return (
-    vcard.find((r: any[]) => r[0] === 'fn')?.[3] ||
-    vcard.find((r: any[]) => r[0] === 'org')?.[3] ||
-    null
-  );
-}
 
 function escapeHtml(input: string) {
   return input.replace(
@@ -615,4 +601,3 @@ Deno.serve(async (req) => {
   });
 
 });
-```
