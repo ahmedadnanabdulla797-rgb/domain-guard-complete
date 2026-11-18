@@ -795,9 +795,58 @@ async function importDomains(e) {
   let imported = 0;
   let checked = 0;
   let failed = 0;
+  let noRecord = 0;
+  let postponed = 0;
+
+  const now = () => new Date().toISOString();
+
+  const hoursFromNow = hours =>
+    new Date(Date.now() + hours * 60 * 60 * 1000).toISOString();
+
+  const getRetryTime = seconds => {
+    const retrySeconds = Number(seconds);
+
+    return new Date(
+      Date.now() +
+      (Number.isFinite(retrySeconds) && retrySeconds >= 60
+        ? retrySeconds
+        : 172800) * 1000
+    ).toISOString();
+  };
+
+  // Save lookup results safely to Supabase.
+
+  const saveDomain = async (domain, update) => {
+    const { data: saved, error } = await client
+      .from('domains')
+      .update(update)
+      .eq('id', domain.id)
+      .eq('owner_id', state.user.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    state.domains = state.domains.map(d =>
+      d.id === domain.id ? saved : d
+    );
+
+    return saved;
+  };
+
+  // Keep a domain for another lookup without marking it as failed.
+
+  const postponeDomain = async (domain, retryAt, message) => {
+    await saveDomain(domain, {
+      last_check_error: message || 'Lookup postponed because of API rate limits.',
+      next_check_at: retryAt
+    });
+
+    postponed++;
+  };
 
   try {
-    // STEP 1: Insert domains into Supabase.
+    // STEP 1: Insert imported domains.
 
     const { data, error } = await client
       .from('domains')
@@ -812,14 +861,38 @@ async function importDomains(e) {
 
     imported = importedDomains.length;
 
-    // STEP 2: Automatically look up registration information.
-    // Maximum 10 domains per API request.
+    // STEP 2: Look up registration information in batches of 10.
 
     const batchSize = 10;
+    let stopProcessing = false;
+    let globalRetryAt = null;
 
     for (let i = 0; i < importedDomains.length; i += batchSize) {
 
       const batch = importedDomains.slice(i, i + batchSize);
+
+      // If the API has already rate-limited us,
+      // postpone all remaining domains.
+
+      if (stopProcessing) {
+        for (const domain of batch) {
+          try {
+            await postponeDomain(
+              domain,
+              globalRetryAt,
+              'Lookup postponed because the API rate limit was reached.'
+            );
+          } catch (saveError) {
+            console.error(
+              `Could not postpone ${domain.domain_name}:`,
+              saveError
+            );
+            failed++;
+          }
+        }
+
+        continue;
+      }
 
       if (button) {
         button.textContent =
@@ -827,7 +900,6 @@ async function importDomains(e) {
       }
 
       try {
-
         const { data: lookupData, error: lookupError } =
           await client.functions.invoke('import-domains', {
             body: {
@@ -841,17 +913,58 @@ async function importDomains(e) {
           throw new Error('Invalid domain lookup response.');
         }
 
+        // Find the first rate-limited result.
+        // Remaining domains should not be retried immediately.
+
+        const rateLimitedResult = lookupData.results.find(
+          r => r.code === 'RATE_LIMITED'
+        );
+
+        if (rateLimitedResult) {
+          globalRetryAt = getRetryTime(
+            rateLimitedResult.retry_after_seconds
+          );
+
+          stopProcessing = true;
+        }
+
         for (const domain of batch) {
 
           const result = lookupData.results.find(
-            r => r.domain?.toLowerCase() === domain.domain_name.toLowerCase()
+            r =>
+              r.domain?.toLowerCase() ===
+              domain.domain_name.toLowerCase()
           );
 
-          const now = new Date().toISOString();
+          const checkedAt = now();
+
+          // RATE LIMIT: postpone instead of counting as failure.
+
+          if (
+            result?.code === 'RATE_LIMITED' ||
+            (stopProcessing && !result)
+          ) {
+            try {
+              await postponeDomain(
+                domain,
+                globalRetryAt,
+                'Lookup postponed because the API rate limit was reached.'
+              );
+            } catch (saveError) {
+              console.error(
+                `Could not postpone ${domain.domain_name}:`,
+                saveError
+              );
+              failed++;
+            }
+
+            continue;
+          }
 
           let update = {};
+          let outcome = 'failed';
 
-          // No registration record is not proof of availability.
+          // No registration record does NOT mean available.
 
           if (result?.code === 'NO_REGISTRATION_RECORD') {
 
@@ -859,16 +972,15 @@ async function importDomains(e) {
               domain_status: 'unknown',
               data_source: 'WhoisJSON',
               last_check_error: null,
-              last_checked_at: now,
-              next_check_at: new Date(
-                Date.now() + 24 * 60 * 60 * 1000
-              ).toISOString()
+              last_checked_at: checkedAt,
+              next_check_at: hoursFromNow(24)
             };
+
+            outcome = 'no_record';
 
           } else if (result?.ok && result.rdap) {
 
             try {
-
               const lookup = parseRdap(
                 result.rdap,
                 domain.domain_name
@@ -876,13 +988,19 @@ async function importDomains(e) {
 
               update = {
                 registrar_name:
-                  lookup.registrar_name || domain.registrar_name || null,
+                  lookup.registrar_name ||
+                  domain.registrar_name ||
+                  null,
 
                 registration_date:
-                  lookup.registration_date || domain.registration_date || null,
+                  lookup.registration_date ||
+                  domain.registration_date ||
+                  null,
 
                 expiration_date:
-                  lookup.expiration_date || domain.expiration_date || null,
+                  lookup.expiration_date ||
+                  domain.expiration_date ||
+                  null,
 
                 nameservers:
                   lookup.nameservers?.length
@@ -897,12 +1015,11 @@ async function importDomains(e) {
                 data_source: 'WhoisJSON',
 
                 last_check_error: null,
-                last_checked_at: now,
-
-                next_check_at: new Date(
-                  Date.now() + 24 * 60 * 60 * 1000
-                ).toISOString()
+                last_checked_at: checkedAt,
+                next_check_at: hoursFromNow(24)
               };
+
+              outcome = 'checked';
 
             } catch (parseError) {
 
@@ -911,8 +1028,11 @@ async function importDomains(e) {
                 parseError
               );
 
-              failed++;
-              continue;
+              update = {
+                last_check_error: 'Could not parse registration data.',
+                last_checked_at: checkedAt,
+                next_check_at: hoursFromNow(6)
+              };
             }
 
           } else {
@@ -921,36 +1041,22 @@ async function importDomains(e) {
               last_check_error:
                 result?.error || 'Domain lookup failed.',
 
-              last_checked_at: now,
-
-              next_check_at: new Date(
-                Date.now() + 6 * 60 * 60 * 1000
-              ).toISOString()
+              last_checked_at: checkedAt,
+              next_check_at: hoursFromNow(6)
             };
-
-            failed++;
           }
 
-          // STEP 3: Save lookup information to the database.
+          // STEP 3: Save the result.
 
           try {
+            await saveDomain(domain, update);
 
-            const { data: saved, error: updateError } = await client
-              .from('domains')
-              .update(update)
-              .eq('id', domain.id)
-              .eq('owner_id', state.user.id)
-              .select()
-              .single();
-
-            if (updateError) throw updateError;
-
-            state.domains = state.domains.map(d =>
-              d.id === domain.id ? saved : d
-            );
-
-            if (result?.ok && result.rdap) {
+            if (outcome === 'checked') {
               checked++;
+            } else if (outcome === 'no_record') {
+              noRecord++;
+            } else {
+              failed++;
             }
 
           } catch (saveError) {
@@ -968,31 +1074,33 @@ async function importDomains(e) {
 
         console.error('CSV lookup batch failed:', batchError);
 
-        failed += batch.length;
-
-        // Keep imported domains even if lookup fails.
+        // A failed request is different from a rate limit.
+        // Keep imported domains and retry them after 6 hours.
 
         for (const domain of batch) {
-
-          await client
-            .from('domains')
-            .update({
+          try {
+            await saveDomain(domain, {
               last_check_error:
                 batchError.message || 'Domain lookup unavailable.',
 
-              last_checked_at: new Date().toISOString(),
+              last_checked_at: now(),
+              next_check_at: hoursFromNow(6)
+            });
 
-              next_check_at: new Date(
-                Date.now() + 6 * 60 * 60 * 1000
-              ).toISOString()
-            })
-            .eq('id', domain.id)
-            .eq('owner_id', state.user.id);
+            failed++;
+
+          } catch (saveError) {
+            console.error(
+              `Could not save ${domain.domain_name}:`,
+              saveError
+            );
+            failed++;
+          }
         }
       }
     }
 
-    // STEP 4: Update the interface.
+    // STEP 4: Refresh the interface.
 
     renderAll();
 
@@ -1007,11 +1115,13 @@ async function importDomains(e) {
     }
 
     toast(
-      `Imported ${imported} domains. ${checked} checked, ${failed} lookup failures, ${skipped} skipped.`,
-      imported ? 'success' : 'error'
+      `Imported ${imported} domains. ${checked} checked, ${noRecord} without registration records, ${failed} lookup failures, ${postponed} postponed, ${skipped} skipped.`,
+      'success'
     );
 
   } catch (err) {
+
+    console.error('CSV import failed:', err);
 
     toast(`Import failed: ${err.message}`, 'error');
 
@@ -1023,7 +1133,6 @@ async function importDomains(e) {
     }
   }
 }
-
 async function deleteSelectedDomains() {
   if (!client || !state.user) {
     return toast('Please sign in first.', 'error');
