@@ -1588,6 +1588,42 @@ $('autoRetryToggle').addEventListener('change', async e => {
 
   if (!saved) {
     e.target.checked = !enabled;
+    return;
+  }
+
+  // Resume previously paused domains when automatic retry is enabled.
+  if (enabled) {
+    const { data: pausedDomains, error } = await client
+      .from('domains')
+      .select('id, rate_limit_retry_at')
+      .eq('owner_id', state.user.id)
+      .eq('rate_limit_paused', true);
+
+    if (error) {
+      toast('Could not resume paused domains: ' + error.message, 'error');
+      return;
+    }
+
+    for (const domain of pausedDomains || []) {
+      const retryAt = domain.rate_limit_retry_at;
+      const nextCheck = retryAt && new Date(retryAt) > new Date()
+        ? retryAt
+        : new Date().toISOString();
+
+      const { error: updateError } = await client
+        .from('domains')
+        .update({
+          rate_limit_paused: false,
+          next_check_at: nextCheck
+        })
+        .eq('id', domain.id);
+
+      if (updateError) {
+        console.error('Could not resume domain:', domain.id, updateError);
+      }
+    }
+
+    toast('Previously paused domains have been resumed.', 'success');
   }
 });
 
