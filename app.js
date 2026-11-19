@@ -44,7 +44,34 @@
   async function signOut() { if (client) await client.auth.signOut(); state.user = null; state.session = null; state.domains = []; state.alerts = []; authView(); toast('Signed out.'); }
   async function afterSignIn() { if (!state.user) { authView(); return; } appView(); $('workspaceEmail').textContent = state.user.email || 'Authenticated user'; $('settingsEmail').textContent = state.user.email || '—'; $('settingsUserId').textContent = state.user.id; $('userInitials').textContent = (state.user.email || 'U').slice(0,1).toUpperCase(); await loadWorkspace(); }
   async function loadWorkspace() { if (!client || !state.user) return; $('lastSyncLabel').textContent = 'Syncing workspace…'; try { const [d, a, dl, p, pref] = await Promise.all([client.from('domains').select('*').order('expiration_date', { ascending: true, nullsFirst: false }), client.from('alerts').select('*').order('created_at', { ascending: false }).limit(100), client.from('notification_deliveries').select('*').order('created_at', { ascending: false }).limit(100), client.from('portfolios').select('*').order('name'), client.from('notification_preferences').select('*').maybeSingle()]); if (d.error) throw d.error; state.domains = d.data || []; state.alerts = a.error ? [] : (a.data || []); state.deliveries = dl.error ? [] : (dl.data || []); state.portfolios = p.error ? [] : (p.data || []); state.prefs = pref.error ? null : pref.data; if (!state.prefs) state.prefs = { email_enabled: true, email_recipient: state.user.email || '', telegram_enabled: false, telegram_chat_id: '', notify_days_before: DEFAULT_THRESHOLDS }; fillPrefs(); renderAll(); $('lastSyncLabel').textContent = 'Synced just now'; $('updatedLabel').textContent = `Updated ${new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}`; $('lastSyncDetail').textContent = new Date().toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}); } catch (err) { toast(`Could not load workspace: ${err.message}`, 'error'); $('lastSyncLabel').textContent = 'Sync failed'; } }
-  function fillPrefs() { const p = state.prefs || {}; $('telegramChatId').value = p.telegram_chat_id || ''; $('telegramEnabled').checked = !!p.telegram_enabled; $('notifyEmail').value = p.email_recipient || state.user?.email || ''; $('emailEnabled').checked = p.email_enabled !== false; const days = p.notify_days_before || DEFAULT_THRESHOLDS; document.querySelectorAll('.threshold-check').forEach(el => el.checked = days.includes(Number(el.value))); $('telegramStatus').textContent = p.telegram_enabled && p.telegram_chat_id ? 'Enabled' : 'Not configured'; $('telegramStatus').className = `badge ${p.telegram_enabled && p.telegram_chat_id ? 'healthy' : 'neutral'}`; $('emailStatus').textContent = p.email_enabled && p.email_recipient ? 'Enabled' : 'Not configured'; $('emailStatus').className = `badge ${p.email_enabled && p.email_recipient ? 'healthy' : 'neutral'}`; }
+  function fillPrefs() {
+  const p = state.prefs || {};
+
+  $('telegramChatId').value = p.telegram_chat_id || '';
+  $('telegramEnabled').checked = !!p.telegram_enabled;
+  $('notifyEmail').value = p.email_recipient || state.user?.email || '';
+  $('emailEnabled').checked = p.email_enabled !== false;
+
+  // Automatic retry setting (ON by default)
+  $('autoRetryToggle').checked = p.auto_retry_enabled !== false;
+
+  const days = p.notify_days_before || DEFAULT_THRESHOLDS;
+  document.querySelectorAll('.threshold-check').forEach(el =>
+    el.checked = days.includes(Number(el.value))
+  );
+
+  $('telegramStatus').textContent =
+    p.telegram_enabled && p.telegram_chat_id ? 'Enabled' : 'Not configured';
+
+  $('telegramStatus').className =
+    `badge ${p.telegram_enabled && p.telegram_chat_id ? 'healthy' : 'neutral'}`;
+
+  $('emailStatus').textContent =
+    p.email_enabled && p.email_recipient ? 'Enabled' : 'Not configured';
+
+  $('emailStatus').className =
+    `badge ${p.email_enabled && p.email_recipient ? 'healthy' : 'neutral'}`;
+}
   async function savePrefs(patch, success = 'Settings saved.') { if (!client || !state.user) return toast('Connect Supabase and sign in first.', 'error'); const row = { ...(state.prefs || {}), ...patch, user_id: state.user.id, updated_at: new Date().toISOString() }; delete row.id; const { data, error } = await client.from('notification_preferences').upsert(row, { onConflict: 'user_id' }).select().single(); if (error) { toast(error.message, 'error'); return false; } state.prefs = data; fillPrefs(); toast(success, 'success'); return true; }
   function renderAll() { renderDashboard(); renderDomains(); renderDistribution(); renderAlerts(); renderPortfolios(); updateCounts(); renderCalendar(); updateFilters(); }
   function updateCounts() { $('navDomainCount').textContent = state.domains.length; const unread = state.alerts.filter(a => !a.is_read).length; $('unreadCount').textContent = unread; $('unreadCount').classList.toggle('hidden', unread === 0); }
