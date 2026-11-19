@@ -251,15 +251,16 @@ Deno.serve(async (req) => {
 
   const now = new Date().toISOString();
 
-  const {
-    data: domains,
-    error
-  } = await admin
-    .from('domains')
-    .select('*')
-    .lte('next_check_at', now)
-    .order('next_check_at')
-    .limit(100);
+ const {
+  data: domains,
+  error
+} = await admin
+  .from('domains')
+  .select('*')
+  .lte('next_check_at', now)
+  .eq('rate_limit_paused', false)
+  .order('next_check_at')
+  .limit(100);
 
   if (error) {
     return json({
