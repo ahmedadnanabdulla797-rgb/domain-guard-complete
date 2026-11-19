@@ -500,13 +500,17 @@ rateLimited = true;
 
         data_source: 'WhoisJSON',
 
-        last_checked_at: now,
+       last_checked_at: now,
 
-        next_check_at: new Date(
-          Date.now() + 24 * 60 * 60 * 1000
-        ).toISOString(),
+next_check_at: new Date(
+  Date.now() + 24 * 60 * 60 * 1000
+).toISOString(),
 
-        last_check_error: null
+last_check_error: null,
+
+rate_limit_retry_at: null,
+
+rate_limit_paused: false
       };
 
       const {
