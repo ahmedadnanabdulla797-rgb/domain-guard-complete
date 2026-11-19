@@ -1568,15 +1568,28 @@ function bindEvents() {  $('authForm').addEventListener('submit', handleAuthSubm
     $('signOutBtn').addEventListener('click', signOut);
     $('settingsSignOut').addEventListener('click', signOut);
 
-    $('themeToggle').addEventListener('click', () => {
-      state.dark = !state.dark;
-      showTheme();
-    });
+  $('themeToggle').addEventListener('click', () => {
+  state.dark = !state.dark;
+  showTheme();
+});
 
-    $('settingsThemeToggle').addEventListener('change', e => {
-      state.dark = e.target.checked;
-      showTheme();
-    });
+$('settingsThemeToggle').addEventListener('change', e => {
+  state.dark = e.target.checked;
+  showTheme();
+});
+
+$('autoRetryToggle').addEventListener('change', async e => {
+  const enabled = e.target.checked;
+
+  const saved = await savePrefs(
+    { auto_retry_enabled: enabled },
+    enabled ? 'Automatic retry enabled.' : 'Automatic retry disabled.'
+  );
+
+  if (!saved) {
+    e.target.checked = !enabled;
+  }
+});
 
     document.querySelectorAll('.nav-item[data-page]').forEach(el =>
       el.addEventListener('click', () => goPage(el.dataset.page))
