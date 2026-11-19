@@ -330,38 +330,88 @@ Deno.serve(async (req) => {
 
       if (response.status === 429) {
 
-        const retryAfterSeconds = getRetrySeconds(response);
+const retryAfterSeconds = getRetrySeconds(response);
 
-        const retryAt = new Date(
-          Date.now() + retryAfterSeconds * 1000
-        ).toISOString();
+const retryAt = new Date(
+  Date.now() + retryAfterSeconds * 1000
+).toISOString();
 
-        console.warn(
-          'WHOISJSON rate limit reached. Postponing remaining domains until:',
-          retryAt
-        );
+console.warn(
+  'WHOISJSON rate limit reached. Postponing remaining domains until:',
+  retryAt
+);
 
-        const remainingDomains = domains!.slice(i);
+const remainingDomains = domains!.slice(i);
 
-        const { error: scheduleError } = await admin
-          .from('domains')
-          .update({
-            next_check_at: retryAt
-          })
-          .in(
-            'id',
-            remainingDomains.map((d: any) => d.id)
-          );
+const ownerIds = [
+  ...new Set(remainingDomains.map((d: any) => d.owner_id))
+];
 
-        if (scheduleError) {
-          errors.push(
-            `Could not postpone domains: ${scheduleError.message}`
-          );
-        } else {
-          postponed = remainingDomains.length;
-        }
+const { data: preferences, error: preferencesError } = await admin
+  .from('notification_preferences')
+  .select('user_id, auto_retry_enabled')
+  .in('user_id', ownerIds);
 
-        rateLimited = true;
+if (preferencesError) {
+  errors.push(
+    `Could not load retry preferences: ${preferencesError.message}`
+  );
+}
+
+const preferenceMap = new Map(
+  (preferences || []).map((p: any) => [
+    p.user_id,
+    p.auto_retry_enabled
+  ])
+);
+
+const automaticRetryIds: string[] = [];
+const pausedIds: string[] = [];
+
+for (const d of remainingDomains) {
+  const autoRetry = preferencesError
+    ? false
+    : preferenceMap.get(d.owner_id) !== false;
+
+  if (autoRetry) {
+    automaticRetryIds.push(d.id);
+  } else {
+    pausedIds.push(d.id);
+  }
+}
+
+if (automaticRetryIds.length > 0) {
+  const { error: autoError } = await admin
+    .from('domains')
+    .update({
+      next_check_at: retryAt,
+      rate_limit_retry_at: retryAt,
+      rate_limit_paused: false
+    })
+    .in('id', automaticRetryIds);
+
+  if (autoError) {
+    errors.push(`Could not schedule automatic retries: ${autoError.message}`);
+  }
+}
+
+if (pausedIds.length > 0) {
+  const { error: pauseError } = await admin
+    .from('domains')
+    .update({
+      next_check_at: retryAt,
+      rate_limit_retry_at: retryAt,
+      rate_limit_paused: true
+    })
+    .in('id', pausedIds);
+
+  if (pauseError) {
+    errors.push(`Could not pause domains: ${pauseError.message}`);
+  }
+}
+
+postponed = automaticRetryIds.length + pausedIds.length;
+rateLimited = true;
 
         break;
       }
