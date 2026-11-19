@@ -243,13 +243,37 @@
               <h2>Appearance</h2><p class="section-description">Choose a theme for this browser.</p>
               <div class="settings-row"><div><strong>Dark mode</strong><small>Preference is saved on this device.</small></div><label class="switch"><input id="settingsThemeToggle" type="checkbox"><span></span></label></div>
             </section>
-            <section class="panel settings-section">
-              <h2>Monitoring</h2><p class="section-description">Checks run in the backend when scheduled monitoring is configured.</p>
-              <div class="settings-row"><div><strong>Default check cadence</strong><small>Configured in the Supabase scheduled function.</small></div><span class="settings-value">Daily</span></div>
-              <div class="settings-row"><div><strong>Registration data</strong><small>RDAP support and fields vary by TLD.</small></div><span class="badge neutral">RDAP</span></div>
-            </section>
-          </div>
-        </section>
+           <section class="panel settings-section">
+  <h2>Monitoring</h2>
+  <p class="section-description">Checks run in the backend when scheduled monitoring is configured.</p>
+
+  <div class="settings-row">
+    <div>
+      <strong>Default check cadence</strong>
+      <small>Configured in the Supabase scheduled function.</small>
+    </div>
+    <span class="settings-value">Daily</span>
+  </div>
+
+  <div class="settings-row">
+    <div>
+      <strong>Registration data</strong>
+      <small>RDAP support and fields vary by TLD.</small>
+    </div>
+    <span class="badge neutral">RDAP</span>
+  </div>
+
+  <div class="settings-row">
+    <div>
+      <strong>Automatic retry after rate limit</strong>
+      <small>Automatically resume domain checks when the provider's waiting period ends.</small>
+    </div>
+    <label class="switch">
+      <input id="autoRetryToggle" type="checkbox" checked>
+      <span></span>
+    </label>
+  </div>
+</section>
 
         <footer class="app-footer"><span>DomainGuard <span id="appVersion">v3.0</span></span><span>Domain data can be incomplete or delayed. Verify renewals with your registrar.</span></footer>
       </div>
